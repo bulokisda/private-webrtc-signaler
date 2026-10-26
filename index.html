@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Family Calling Interface 1.2</title>
+    <title>Family Calling Interface 1.4</title>
     <style>
         body { 
             margin: 0; 
@@ -82,7 +82,6 @@
                     console.log("Received incoming call offer from tablet");
                     await handleIncomingOffer(data.sdp);
                 } else if (data.type === 'answer') {
-                    // FIX: Only apply an incoming remote answer if the browser expects one (avoid loopback crashes)
                     if (peerConnection && peerConnection.signalingState === "have-local-offer") {
                         console.log("Received response answer token from tablet");
                         await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
@@ -115,9 +114,11 @@
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
             peerConnection.ontrack = (event) => {
+                // FIXED: Direct array assignment to unlock the native canvas rendering pipeline
                 if (event.streams && event.streams[0]) {
                     if (remoteVideo.srcObject !== event.streams[0]) {
                         remoteVideo.srcObject = event.streams[0];
+                        console.log("Media track linked to canvas viewport successfully.");
                     }
                 }
             };
