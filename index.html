@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Family Calling Interface 1.0</title>
+    <title>Family Calling Interface</title>
     <style>
         body { 
             margin: 0; 
@@ -59,10 +59,11 @@
         const actionBtn = document.getElementById('actionBtn');
         let inCall = false;
 
-        // FIXED: Re-structured the ICE settings to prevent native browser syntax crashes
+        // FIXED: Using standard, host-only string declarations inside the urls array to clear the invalid hostname error
         const config = { 
             iceServers: [
-                { urls: ["stun:://google.com", "stun:://google.com"] }
+                { urls: "stun:://google.com" },
+                { urls: "stun:://google.com" }
             ] 
         };
 
