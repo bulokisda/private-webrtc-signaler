@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Family Calling Interface 1.4</title>
+    <title>Calling 1.5</title>
     <style>
         body { 
             margin: 0; 
@@ -59,6 +59,9 @@
         const actionBtn = document.getElementById('actionBtn');
         let inCall = false;
 
+        // FIX 1: Safely buffer fast-arrival network paths until WebRTC layers are built
+        let iceCandidateBuffer = []; 
+
         function initSocket() {
             socket = new WebSocket(serverUrl);
             
@@ -85,12 +88,21 @@
                     if (peerConnection && peerConnection.signalingState === "have-local-offer") {
                         console.log("Received response answer token from tablet");
                         await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
+                        // Flush any candidates received while we were waiting for the answer
+                        await flushIceBuffer();
                     } else {
                         console.log("Ignored loopback answer because connection is already stable.");
                     }
-                } else if (data.type === 'candidate' && peerConnection) {
+                } else if (data.type === 'candidate') {
                     if (data.candidate) {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        const candidateObj = new RTCIceCandidate(data.candidate);
+                        // FIX 2: Safely route incoming candidates based on active engine state
+                        if (peerConnection && peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
+                            await peerConnection.addIceCandidate(candidateObj).catch(e => console.error(e));
+                        } else {
+                            console.log("Buffering early ICE candidate safely...");
+                            iceCandidateBuffer.push(candidateObj);
+                        }
                     }
                 }
             };
@@ -99,6 +111,17 @@
                 console.log("Socket connection lost. Retrying hook...");
                 setTimeout(initSocket, 4000);
             };
+        }
+
+        // FIX 3: Helper function to cleanly flush candidate arrays post-handshake stability
+        async function flushIceBuffer() {
+            if (iceCandidateBuffer.length > 0 && peerConnection) {
+                console.log(`Flushing ${iceCandidateBuffer.length} buffered ICE candidates.`);
+                for (const candidate of iceCandidateBuffer) {
+                    await peerConnection.addIceCandidate(candidate).catch(e => console.error(e));
+                }
+                iceCandidateBuffer = [];
+            }
         }
 
         async function initializeMediaAndConnection() {
@@ -114,7 +137,6 @@
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
             peerConnection.ontrack = (event) => {
-                // FIXED: Direct array assignment to unlock the native canvas rendering pipeline
                 if (event.streams && event.streams[0]) {
                     if (remoteVideo.srcObject !== event.streams[0]) {
                         remoteVideo.srcObject = event.streams[0];
@@ -161,6 +183,9 @@
 
                 await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: sdp }));
                 
+                // Flush early candidates right after processing the offer description layer successfully
+                await flushIceBuffer();
+
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 
@@ -185,6 +210,7 @@
             actionBtn.className = "call-btn";
             actionBtn.innerHTML = "📞";
             inCall = false;
+            iceCandidateBuffer = []; // Clear current session trace cache completely
         }
 
         actionBtn.onclick = () => { if (!inCall) { startCall(); } else { endCall(); } };
