@@ -3,7 +3,26 @@ const server = new WebSocket.Server({ port: process.env.PORT || 8080 });
 
 let browserClient = null;
 let tabletClient = null;
-let pendingOffer = null; // Stores the signal if the tablet is busy or booting
+let pendingOffer = null;
+
+// New helper to broadcast live availability changes to both clients
+function broadcastPresence() {
+    const isBrowserOpen = browserClient && browserClient.readyState === WebSocket.OPEN;
+    const isTabletOpen = tabletClient && tabletClient.readyState === WebSocket.OPEN;
+
+    if (isBrowserOpen) {
+        browserClient.send(JSON.stringify({ 
+            type: 'partner-status', 
+            online: isTabletOpen 
+        }));
+    }
+    if (isTabletOpen) {
+        tabletClient.send(JSON.stringify({ 
+            type: 'partner-status', 
+            online: isBrowserOpen 
+        }));
+    }
+}
 
 server.on('connection', (ws) => {
     ws.on('message', (message) => {
@@ -12,14 +31,12 @@ server.on('connection', (ws) => {
         if (data.type === 'register-browser') {
             browserClient = ws;
             console.log("Browser connected.");
-            if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                browserClient.send(JSON.stringify({ type: 'tablet-online' }));
-            }
+            broadcastPresence(); // Trigger presence check
         } else if (data.type === 'register-tablet') {
             tabletClient = ws;
             console.log("Tablet connected and verified.");
+            broadcastPresence(); // Trigger presence check
             
-            // If the browser sent an offer while the tablet was offline, forward it now
             if (pendingOffer && tabletClient.readyState === WebSocket.OPEN) {
                 console.log("Flushing queued offer to tablet.");
                 tabletClient.send(JSON.stringify(pendingOffer));
@@ -28,7 +45,6 @@ server.on('connection', (ws) => {
         }
         
         if (data.type === 'offer') {
-            // FIXED: If the tablet sends the offer, forward it to the browser. Otherwise send it to the tablet.
             if (ws === tabletClient) {
                 if (browserClient && browserClient.readyState === WebSocket.OPEN) {
                     console.log("Routing tablet offer to browser.");
@@ -42,61 +58,37 @@ server.on('connection', (ws) => {
                     tabletClient.send(JSON.stringify(data));
                 } else {
                     console.log("Tablet not ready. Queueing offer payload.");
-                    pendingOffer = data; // Buffer the signal safely
+                    pendingOffer = data;
                 }
             }
         } else if (data.type === 'candidate') {
-            // FIXED: Cleaned up bidirectional ICE routing logic using absolute client tracking structures
-            if (ws === browserClient) {
-                if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                    tabletClient.send(JSON.stringify(data));
-                }
-            } else if (ws === tabletClient) {
-                if (browserClient && browserClient.readyState === WebSocket.OPEN) {
-                    browserClient.send(JSON.stringify(data));
-                }
+            if (ws === browserClient && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
+                tabletClient.send(JSON.stringify(data));
+            } else if (ws === tabletClient && browserClient && browserClient.readyState === WebSocket.OPEN) {
+                browserClient.send(JSON.stringify(data));
             }
-        } else // REPLACE your current data.type === 'answer' block with this:
-        if (data.type === 'answer') {
-            if (ws === tabletClient) {
-                // If the tablet answered a browser's call, send it to the browser
-                if (browserClient && browserClient.readyState === WebSocket.OPEN) {
-                    console.log("Routing tablet answer back to browser.");
-                    browserClient.send(JSON.stringify(data));
-                }
-            } else if (ws === browserClient) {
-                // If the browser answered a tablet's call, send it to the tablet
-                if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                    console.log("Routing browser answer back to tablet.");
-                    tabletClient.send(JSON.stringify(data));
-                }
-            }
-        }
-
-        // Add this inside your ws.on('message') block alongside your other signal types
-        if (data.type === 'hangup') {
+        } else if (data.type === 'answer') {
             if (ws === tabletClient && browserClient && browserClient.readyState === WebSocket.OPEN) {
-                console.log("Tablet hung up. Forwarding to browser.");
+                browserClient.send(JSON.stringify(data));
+            } else if (ws === browserClient && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
+                tabletClient.send(JSON.stringify(data));
+            }
+        } else if (data.type === 'hangup') {
+            if (ws === tabletClient && browserClient && browserClient.readyState === WebSocket.OPEN) {
                 browserClient.send(JSON.stringify({ type: 'hangup' }));
             } else if (ws === browserClient && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                console.log("Browser hung up. Forwarding to tablet.");
                 tabletClient.send(JSON.stringify({ type: 'hangup' }));
             }
         }
-
-
     });
 
     ws.on('close', () => {
-        if (ws === browserClient) {
-            console.log("Browser disconnected.");
-            browserClient = null;
-        }
+        if (ws === browserClient) browserClient = null;
         if (ws === tabletClient) {
-            console.log("Tablet disconnected.");
             tabletClient = null;
             pendingOffer = null;
         }
+        broadcastPresence(); // Trigger updates when a client drops off natively
     });
 });
 
