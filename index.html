@@ -102,13 +102,25 @@
             };
         }
 
-        async function startCall() {
+                async function startCall() {
             try {
                 inCall = true;
                 actionBtn.className = "hang-btn";
                 actionBtn.innerHTML = "❌";
 
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                console.log("Requesting hardware device permissions...");
+                
+                // Optimized Safe Hardware Grabber Loop
+                try {
+                    // Try to grab both camera and microphone first
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                    console.log("Camera and Microphone loaded successfully.");
+                } catch (mediaErr) {
+                    console.warn("Microphone blocked or missing. Attempting video-only fallback...", mediaErr);
+                    // Fallback: If microphone fails, initialize with video stream only so the call doesn't crash
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+                    console.log("Video-only fallback mode active.");
+                }
                 
                 peerConnection = new RTCPeerConnection(config);
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
@@ -116,6 +128,7 @@
                 peerConnection.ontrack = (event) => {
                     if (remoteVideo.srcObject !== event.streams[0]) {
                         remoteVideo.srcObject = event.streams[0];
+                        console.log("Remote video track rendered successfully.");
                     }
                 };
 
@@ -128,11 +141,13 @@
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 socket.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+                console.log("WebRTC offer dispatched to Render switchboard.");
             } catch (err) {
-                console.error("Camera access or connection setup failed: ", err);
+                console.error("Critical connection setup failure: ", err);
                 endCall();
             }
         }
+
 
         function endCall() {
             if (peerConnection) peerConnection.close();
