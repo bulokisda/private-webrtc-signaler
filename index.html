@@ -144,9 +144,15 @@
 
                 peerConnection.onicecandidate = (event) => {
                     if (event.candidate) {
-                        socket.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+                        // Tag the network candidate explicitly for the tablet
+                        socket.send(JSON.stringify({ 
+                            type: 'candidate', 
+                            target: 'tablet',
+                            candidate: event.candidate 
+                        }));
                     }
                 };
+
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
