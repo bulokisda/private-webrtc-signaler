@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Family Calling Interface</title>
+    <title>Family Calling Interface 1.0</title>
     <style>
         body { 
             margin: 0; 
@@ -59,10 +59,10 @@
         const actionBtn = document.getElementById('actionBtn');
         let inCall = false;
 
+        // FIXED: Re-structured the ICE settings to prevent native browser syntax crashes
         const config = { 
             iceServers: [
-                { urls: 'stun:://google.com' },
-                { urls: 'stun:://google.com' }
+                { urls: ["stun:://google.com", "stun:://google.com"] }
             ] 
         };
 
@@ -90,7 +90,6 @@
                     await handleIncomingOffer(data.sdp);
                 } else if (data.type === 'answer') {
                     console.log("Received response answer token from tablet");
-                    // Ensure structural extraction matches the absolute format the browser expects
                     await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
                 } else if (data.type === 'candidate' && peerConnection) {
                     if (data.candidate) {
@@ -118,7 +117,6 @@
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
             peerConnection.ontrack = (event) => {
-                // FIX 1: Extract the specific index-0 element array track out to prevent canvas layout freezes
                 if (event.streams && event.streams[0]) {
                     if (remoteVideo.srcObject !== event.streams[0]) {
                         remoteVideo.srcObject = event.streams[0];
@@ -146,7 +144,6 @@
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
-                // FIX 2: Send structured payloads matching the strict naming conventions of your server routes
                 socket.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
                 console.log("WebRTC offer dispatched to Render switchboard.");
             } catch (err) {
@@ -168,7 +165,6 @@
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 
-                // FIX 3: Structure output parameters safely so the tablet's async receiver can map them instantly
                 socket.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
                 console.log("WebRTC answer dispatched back to tablet.");
             } catch (err) {
