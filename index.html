@@ -71,11 +71,15 @@
         <video id="remoteVideo" autoplay playsinline></video>
         <video id="localVideo" autoplay playsinline muted></video> <!-- muted stops local audio feedback loops -->
     </div>
+    <div id="statusBadge" style="margin-bottom: 20px; font-weight: bold; font-size: 18px; color: #aaa;">
+        Tablet Status: <span id="statusText" style="color: #d73a49;">Offline 🔴</span>
+    </div>
     
     <button id="actionBtn" class="call-btn">📞</button>
 
     <script>
         const serverUrl = "wss://family-video-signaler.onrender.com";
+        const statusText = document.getElementById('statusText');
         
         let localStream;
         let peerConnection;
@@ -130,10 +134,27 @@
                         }
                     }
                 }
+                if (data.type === 'partner-status') {
+                    if (data.online) {
+                        statusText.innerHTML = "Available 🟢";
+                        statusText.style.color = "#2ea44f";
+                        actionBtn.style.backgroundColor = "#2ea44f";
+                        actionBtn.disabled = false;
+                    } else {
+                        statusText.innerHTML = "Offline 🔴";
+                        statusText.style.color = "#d73a49";
+                        // Optional: styling adjustment if you want to visually restrict clicking while offline
+                        if(!inCall) {
+                            actionBtn.style.backgroundColor = "#555";
+                        }
+                    }
+                }
             };
 
             socket.onclose = () => {
                 console.log("Socket connection lost. Retrying hook...");
+                statusText.innerHTML = "Offline 🔴";
+                statusText.style.color = "#d73a49";
                 setTimeout(initSocket, 4000);
             };
         }
