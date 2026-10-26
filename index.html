@@ -84,6 +84,9 @@
                 } else if (data.type === 'offer') {
                     console.log("Received incoming call offer from tablet");
                     await handleIncomingOffer(data.sdp);
+                } else if (data.type === 'hangup') {
+                    console.log("Partner hung up the call.");
+                    endCall(false); // End call locally without looping back to server
                 } else if (data.type === 'answer') {
                     if (peerConnection && peerConnection.signalingState === "have-local-offer") {
                         console.log("Received response answer token from tablet");
@@ -197,7 +200,11 @@
             }
         }
 
-        function endCall() {
+        function endCall(sendSignal = true) {
+            if (sendSignal && socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'hangup' }));
+            }
+        
             if (peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
@@ -210,8 +217,9 @@
             actionBtn.className = "call-btn";
             actionBtn.innerHTML = "📞";
             inCall = false;
-            iceCandidateBuffer = []; // Clear current session trace cache completely
+            iceCandidateBuffer = [];
         }
+
 
         actionBtn.onclick = () => { if (!inCall) { startCall(); } else { endCall(); } };
         initSocket();
