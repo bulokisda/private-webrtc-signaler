@@ -62,7 +62,17 @@
         let inCall = false;
 
         // Public STUN infrastructure to discover network configurations across countries
-        const config = { iceServers: [{ urls: 'stun:://google.com' }] };
+                // Public routing directory targets to bypass home firewalls and NAT barriers
+        const config = { 
+            iceServers: [
+                { urls: 'stun:://google.com' },
+                { urls: 'stun:://google.com' },
+                { urls: 'stun:://google.com' },
+                { urls: 'stun:://google.com' },
+                { urls: 'stun:://google.com' }
+            ] 
+        };
+
 
         function initSocket() {
             socket = new WebSocket(serverUrl);
