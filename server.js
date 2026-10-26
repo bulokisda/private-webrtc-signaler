@@ -56,12 +56,23 @@ server.on('connection', (ws) => {
                     browserClient.send(JSON.stringify(data));
                 }
             }
-        } else if (data.type === 'answer') {
-            if (browserClient && browserClient.readyState === WebSocket.OPEN) {
-                console.log("Routing answer payload back to browser.");
-                browserClient.send(JSON.stringify(data));
+        } else // REPLACE your current data.type === 'answer' block with this:
+        if (data.type === 'answer') {
+            if (ws === tabletClient) {
+                // If the tablet answered a browser's call, send it to the browser
+                if (browserClient && browserClient.readyState === WebSocket.OPEN) {
+                    console.log("Routing tablet answer back to browser.");
+                    browserClient.send(JSON.stringify(data));
+                }
+            } else if (ws === browserClient) {
+                // If the browser answered a tablet's call, send it to the tablet
+                if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
+                    console.log("Routing browser answer back to tablet.");
+                    tabletClient.send(JSON.stringify(data));
+                }
             }
         }
+
     });
 
     ws.on('close', () => {
