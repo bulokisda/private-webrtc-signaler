@@ -61,13 +61,11 @@
         let inCall = false;
 
         // FIXED ICE Server definitions: Clears the parsing syntax crash
+                // Empty configuration: Forces the browser to connect using clean local direct P2P network routes
         const config = { 
-            iceServers: [
-                { urls: "stun:://google.com" },
-                { urls: "stun:://google.com" },
-                { urls: "stun:://google.com" }
-            ] 
+            iceServers: [] 
         };
+
 
         function initSocket() {
             socket = new WebSocket(serverUrl);
