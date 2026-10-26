@@ -50,7 +50,6 @@
     <button id="actionBtn" class="call-btn">📞</button>
 
     <script>
-        // FIXED URL format: Strictly points to your live Render backend instance channel
         const serverUrl = "wss://family-video-signaler.onrender.com";
         
         let localStream;
@@ -60,12 +59,12 @@
         const actionBtn = document.getElementById('actionBtn');
         let inCall = false;
 
-        // FIXED ICE Server definitions: Clears the parsing syntax crash
-                // Empty configuration: Forces the browser to connect using clean local direct P2P network routes
         const config = { 
-            iceServers: [] 
+            iceServers: [
+                { urls: 'stun:://google.com' },
+                { urls: 'stun:://google.com' }
+            ] 
         };
-
 
         function initSocket() {
             socket = new WebSocket(serverUrl);
@@ -83,13 +82,19 @@
 
             socket.onmessage = async (msg) => {
                 const data = JSON.parse(msg.data);
+                
                 if (data.type === 'tablet-online') {
                     console.log("Tablet ready. Initializing handshake...");
+                } else if (data.type === 'offer') {
+                    console.log("Received incoming call offer from tablet");
+                    await handleIncomingOffer(data.sdp);
                 } else if (data.type === 'answer') {
                     console.log("Received response answer token from tablet");
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
                 } else if (data.type === 'candidate' && peerConnection) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    if (data.candidate) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    }
                 }
             };
 
@@ -99,52 +104,82 @@
             };
         }
 
+        async function initializeMediaAndConnection() {
+            console.log("Requesting hardware device permissions...");
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            } catch (mediaErr) {
+                console.warn("Microphone blocked. Falling back to video-only.");
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+            }
+            
+            peerConnection = new RTCPeerConnection(config);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            peerConnection.ontrack = (event) => {
+                if (remoteVideo.srcObject !== event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                }
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.send(JSON.stringify({ 
+                        type: 'candidate', 
+                        candidate: event.candidate 
+                    }));
+                }
+            };
+        }
+
         async function startCall() {
             try {
                 inCall = true;
                 actionBtn.className = "hang-btn";
                 actionBtn.innerHTML = "❌";
 
-                console.log("Requesting hardware device permissions...");
-                try {
-                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                } catch (mediaErr) {
-                    console.warn("Microphone blocked. Falling back to video-only.");
-                    localStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-                }
-                
-                peerConnection = new RTCPeerConnection(config);
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-                peerConnection.ontrack = (event) => {
-                    if (remoteVideo.srcObject !== event.streams[0]) {
-                        remoteVideo.srcObject = event.streams[0];
-                    }
-                };
-
-                peerConnection.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        socket.send(JSON.stringify({ 
-                            type: 'candidate', 
-                            target: 'tablet',
-                            candidate: event.candidate 
-                        }));
-                    }
-                };
+                await initializeMediaAndConnection();
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 socket.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
                 console.log("WebRTC offer dispatched to Render switchboard.");
             } catch (err) {
-                console.error("Critical connection setup failure: ", err);
+                console.error("Critical outgoing connection setup failure: ", err);
+                endCall();
+            }
+        }
+
+        async function handleIncomingOffer(sdp) {
+            try {
+                inCall = true;
+                actionBtn.className = "hang-btn";
+                actionBtn.innerHTML = "❌";
+
+                await initializeMediaAndConnection();
+
+                await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: sdp }));
+                
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                
+                socket.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+                console.log("WebRTC answer dispatched back to tablet.");
+            } catch (err) {
+                console.error("Critical incoming connection setup failure: ", err);
                 endCall();
             }
         }
 
         function endCall() {
-            if (peerConnection) peerConnection.close();
-            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
             remoteVideo.srcObject = null;
             actionBtn.className = "call-btn";
             actionBtn.innerHTML = "📞";
