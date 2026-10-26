@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calling 1.6</title>
+    <title>Calling 1.7</title>
     <style>
         body { 
             margin: 0; 
@@ -15,14 +15,34 @@
             justify-content: center; 
             height: 100vh; 
             color: white; 
+            overflow: hidden;
         }
-        video { 
+        .video-container {
+            position: relative;
             width: 90vw; 
             height: 60vh; 
+            margin-bottom: 20px;
+        }
+        #remoteVideo { 
+            width: 100%; 
+            height: 100%; 
             background: #222; 
             border-radius: 12px; 
             object-fit: cover; 
-            margin-bottom: 20px; 
+        }
+        /* New Picture-in-Picture CSS Layout styling for your local camera */
+        #localVideo {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 120px;
+            height: 160px;
+            background: #333;
+            border-radius: 8px;
+            object-fit: cover;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transform: scaleX(-1); /* Mirrors the local camera preview naturally */
+            display: none; /* Hidden until a media track starts streaming */
         }
         button { 
             width: 100px; 
@@ -46,7 +66,12 @@
 </head>
 <body>
 
-    <video id="remoteVideo" autoplay playsinline></video>
+    <!-- Wrapped videos inside a shared relative container layer -->
+    <div class="video-container">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <video id="localVideo" autoplay playsinline muted></video> <!-- muted stops local audio feedback loops -->
+    </div>
+    
     <button id="actionBtn" class="call-btn">📞</button>
 
     <script>
@@ -56,10 +81,9 @@
         let peerConnection;
         let socket;
         const remoteVideo = document.getElementById('remoteVideo');
+        const localVideo = document.getElementById('localVideo');
         const actionBtn = document.getElementById('actionBtn');
         let inCall = false;
-
-        // FIX 1: Safely buffer fast-arrival network paths until WebRTC layers are built
         let iceCandidateBuffer = []; 
 
         function initSocket() {
@@ -84,22 +108,20 @@
                 } else if (data.type === 'offer') {
                     console.log("Received incoming call offer from tablet");
                     await handleIncomingOffer(data.sdp);
-                } else if (data.type === 'hangup') {
-                    console.log("Partner hung up the call.");
-                    endCall(false); // End call locally without looping back to server
                 } else if (data.type === 'answer') {
                     if (peerConnection && peerConnection.signalingState === "have-local-offer") {
                         console.log("Received response answer token from tablet");
                         await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-                        // Flush any candidates received while we were waiting for the answer
                         await flushIceBuffer();
                     } else {
                         console.log("Ignored loopback answer because connection is already stable.");
                     }
+                } else if (data.type === 'hangup') {
+                    console.log("Partner hung up the call.");
+                    endCall(false);
                 } else if (data.type === 'candidate') {
                     if (data.candidate) {
                         const candidateObj = new RTCIceCandidate(data.candidate);
-                        // FIX 2: Safely route incoming candidates based on active engine state
                         if (peerConnection && peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
                             await peerConnection.addIceCandidate(candidateObj).catch(e => console.error(e));
                         } else {
@@ -116,7 +138,6 @@
             };
         }
 
-        // FIX 3: Helper function to cleanly flush candidate arrays post-handshake stability
         async function flushIceBuffer() {
             if (iceCandidateBuffer.length > 0 && peerConnection) {
                 console.log(`Flushing ${iceCandidateBuffer.length} buffered ICE candidates.`);
@@ -136,6 +157,10 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
             }
             
+            // FIXED: Map local camera hardware directly to your layout viewer window
+            localVideo.srcObject = localStream;
+            localVideo.style.display = "block"; // Show the local preview layout container
+
             peerConnection = new RTCPeerConnection({ iceServers: [] });
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
@@ -185,8 +210,6 @@
                 await initializeMediaAndConnection();
 
                 await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: sdp }));
-                
-                // Flush early candidates right after processing the offer description layer successfully
                 await flushIceBuffer();
 
                 const answer = await peerConnection.createAnswer();
@@ -204,7 +227,7 @@
             if (sendSignal && socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ type: 'hangup' }));
             }
-        
+
             if (peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
@@ -213,13 +236,17 @@
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
+            
+            // Re-hide local layout views during cleanup phases
             remoteVideo.srcObject = null;
+            localVideo.srcObject = null;
+            localVideo.style.display = "none";
+            
             actionBtn.className = "call-btn";
             actionBtn.innerHTML = "📞";
             inCall = false;
             iceCandidateBuffer = [];
         }
-
 
         actionBtn.onclick = () => { if (!inCall) { startCall(); } else { endCall(); } };
         initSocket();
