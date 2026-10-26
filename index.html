@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Calling Interface</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: #111; 
+            font-family: sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100vh; 
+            color: white; 
+        }
+        video { 
+            width: 90vw; 
+            height: 60vh; 
+            background: #222; 
+            border-radius: 12px; 
+            object-fit: cover; 
+            margin-bottom: 20px; 
+        }
+        button { 
+            width: 100px; 
+            height: 100px; 
+            border-radius: 50%; 
+            border: none; 
+            font-size: 36px; 
+            cursor: pointer; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            box-shadow: 0 8px 15px rgba(0,0,0,0.3);
+            transition: transform 0.1s ease;
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+        .call-btn { background: #2ea44f; color: white; }
+        .hang-btn { background: #d73a49; color: white; }
+    </style>
+</head>
+<body>
+
+    <!-- Visual Layout Elements -->
+    <video id="remoteVideo" autoplay playsinline></video>
+    <button id="actionBtn" class="call-btn">📞</button>
+
+    <!-- Connection Script Layer -->
+    <script>
+        const serverUrl = "wss://://onrender.com";
+        
+        let localStream;
+        let peerConnection;
+        let socket;
+        const remoteVideo = document.getElementById('remoteVideo');
+        const actionBtn = document.getElementById('actionBtn');
+        let inCall = false;
+
+        // Public STUN infrastructure to discover network configurations across countries
+        const config = { iceServers: [{ urls: 'stun:://google.com' }] };
+
+        function initSocket() {
+            socket = new WebSocket(serverUrl);
+            
+            socket.onopen = () => {
+                console.log("Connected to live server switcher");
+                socket.send(JSON.stringify({ type: 'register-browser' }));
+                
+                // HEARTBEAT PING: Prevents Render free-tier from dropping connection loops
+                setInterval(() => {
+                    if (socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({ type: 'ping' }));
+                    }
+                }, 25000);
+            };
+
+                    socket.onmessage = async (msg) => {
+            const data = JSON.parse(msg.data);
+            
+            // FIX: If server says tablet is connected, trigger the calling handshake automatically
+            if (data.type === 'tablet-online') {
+                console.log("Tablet detected online by server. Initializing direct video link...");
+                if (!inCall) { startCall(); }
+            } else if (data.type === 'answer') {
+                console.log("Received response answer token from tablet");
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+            } else if (data.type === 'candidate' && peerConnection) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        };
+
+
+            // AUTO-RECONNECT: If socket drops out before the tablet answers, spin it back up
+            socket.onclose = () => {
+                console.log("Socket connection lost. Retrying socket hook...");
+                setTimeout(initSocket, 2000);
+            };
+        }
+
+        async function startCall() {
+            try {
+                inCall = true;
+                actionBtn.className = "hang-btn";
+                actionBtn.innerHTML = "❌";
+
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                
+                peerConnection = new RTCPeerConnection(config);
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                peerConnection.ontrack = (event) => {
+                    if (remoteVideo.srcObject !== event.streams[0]) {
+                        remoteVideo.srcObject = event.streams[0];
+                    }
+                };
+
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        socket.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+                    }
+                };
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                socket.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+            } catch (err) {
+                console.error("Camera access or connection setup failed: ", err);
+                endCall();
+            }
+        }
+
+        function endCall() {
+            if (peerConnection) peerConnection.close();
+            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            remoteVideo.srcObject = null;
+            actionBtn.className = "call-btn";
+            actionBtn.innerHTML = "📞";
+            inCall = false;
+        }
+
+        actionBtn.onclick = () => { if (!inCall) { startCall(); } else { endCall(); } };
+        initSocket();
+    </script>
+</body>
+</html>
