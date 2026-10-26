@@ -73,6 +73,18 @@ server.on('connection', (ws) => {
             }
         }
 
+        // Add this inside your ws.on('message') block alongside your other signal types
+        if (data.type === 'hangup') {
+            if (ws === tabletClient && browserClient && browserClient.readyState === WebSocket.OPEN) {
+                console.log("Tablet hung up. Forwarding to browser.");
+                browserClient.send(JSON.stringify({ type: 'hangup' }));
+            } else if (ws === browserClient && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
+                console.log("Browser hung up. Forwarding to tablet.");
+                tabletClient.send(JSON.stringify({ type: 'hangup' }));
+            }
+        }
+
+
     });
 
     ws.on('close', () => {
