@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Family Calling Interface</title>
+    <title>Family Calling Interface 1.1</title>
     <style>
         body { 
             margin: 0; 
@@ -59,14 +59,6 @@
         const actionBtn = document.getElementById('actionBtn');
         let inCall = false;
 
-        // FIXED: Using standard, host-only string declarations inside the urls array to clear the invalid hostname error
-        const config = { 
-            iceServers: [
-                { urls: "stun:://google.com" },
-                { urls: "stun:://google.com" }
-            ] 
-        };
-
         function initSocket() {
             socket = new WebSocket(serverUrl);
             
@@ -114,7 +106,8 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
             }
             
-            peerConnection = new RTCPeerConnection(config);
+            // FIX: Removed the config variable reference completely to wipe out the syntax parsing exception
+            peerConnection = new RTCPeerConnection({ iceServers: [] });
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
             peerConnection.ontrack = (event) => {
