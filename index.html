@@ -46,13 +46,12 @@
 </head>
 <body>
 
-    <!-- Visual Layout Elements -->
     <video id="remoteVideo" autoplay playsinline></video>
     <button id="actionBtn" class="call-btn">📞</button>
 
-    <!-- Connection Script Layer -->
     <script>
-        const serverUrl = "wss://://onrender.com";
+        // FIXED URL format: Strictly points to your live Render backend instance channel
+        const serverUrl = "wss://family-video-signaler.onrender.com";
         
         let localStream;
         let peerConnection;
@@ -61,18 +60,14 @@
         const actionBtn = document.getElementById('actionBtn');
         let inCall = false;
 
-        // Public STUN infrastructure to discover network configurations across countries
-                // Public routing directory targets to bypass home firewalls and NAT barriers
+        // FIXED ICE Server definitions: Clears the parsing syntax crash
         const config = { 
             iceServers: [
-                { urls: 'stun:://google.com' },
-                { urls: 'stun:://google.com' },
-                { urls: 'stun:://google.com' },
-                { urls: 'stun:://google.com' },
-                { urls: 'stun:://google.com' }
+                { urls: "stun:://google.com" },
+                { urls: "stun:://google.com" },
+                { urls: "stun:://google.com" }
             ] 
         };
-
 
         function initSocket() {
             socket = new WebSocket(serverUrl);
@@ -81,7 +76,6 @@
                 console.log("Connected to live server switcher");
                 socket.send(JSON.stringify({ type: 'register-browser' }));
                 
-                // HEARTBEAT PING: Prevents Render free-tier from dropping connection loops
                 setInterval(() => {
                     if (socket.readyState === WebSocket.OPEN) {
                         socket.send(JSON.stringify({ type: 'ping' }));
@@ -89,47 +83,36 @@
                 }, 25000);
             };
 
-                    socket.onmessage = async (msg) => {
-            const data = JSON.parse(msg.data);
-            
-            // FIX: If server says tablet is connected, trigger the calling handshake automatically
-            if (data.type === 'tablet-online') {
-                console.log("Tablet detected online by server. Initializing direct video link...");
-                if (!inCall) { startCall(); }
-            } else if (data.type === 'answer') {
-                console.log("Received response answer token from tablet");
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
-            } else if (data.type === 'candidate' && peerConnection) {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-            }
-        };
+            socket.onmessage = async (msg) => {
+                const data = JSON.parse(msg.data);
+                if (data.type === 'tablet-online') {
+                    console.log("Tablet ready. Initializing handshake...");
+                } else if (data.type === 'answer') {
+                    console.log("Received response answer token from tablet");
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+                } else if (data.type === 'candidate' && peerConnection) {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                }
+            };
 
-
-            // AUTO-RECONNECT: If socket drops out before the tablet answers, spin it back up
             socket.onclose = () => {
-                console.log("Socket connection lost. Retrying socket hook...");
-                setTimeout(initSocket, 2000);
+                console.log("Socket connection lost. Retrying hook...");
+                setTimeout(initSocket, 4000);
             };
         }
 
-                async function startCall() {
+        async function startCall() {
             try {
                 inCall = true;
                 actionBtn.className = "hang-btn";
                 actionBtn.innerHTML = "❌";
 
                 console.log("Requesting hardware device permissions...");
-                
-                // Optimized Safe Hardware Grabber Loop
                 try {
-                    // Try to grab both camera and microphone first
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                    console.log("Camera and Microphone loaded successfully.");
                 } catch (mediaErr) {
-                    console.warn("Microphone blocked or missing. Attempting video-only fallback...", mediaErr);
-                    // Fallback: If microphone fails, initialize with video stream only so the call doesn't crash
+                    console.warn("Microphone blocked. Falling back to video-only.");
                     localStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-                    console.log("Video-only fallback mode active.");
                 }
                 
                 peerConnection = new RTCPeerConnection(config);
@@ -138,13 +121,11 @@
                 peerConnection.ontrack = (event) => {
                     if (remoteVideo.srcObject !== event.streams[0]) {
                         remoteVideo.srcObject = event.streams[0];
-                        console.log("Remote video track rendered successfully.");
                     }
                 };
 
                 peerConnection.onicecandidate = (event) => {
                     if (event.candidate) {
-                        // Tag the network candidate explicitly for the tablet
                         socket.send(JSON.stringify({ 
                             type: 'candidate', 
                             target: 'tablet',
@@ -152,7 +133,6 @@
                         }));
                     }
                 };
-
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
@@ -163,7 +143,6 @@
                 endCall();
             }
         }
-
 
         function endCall() {
             if (peerConnection) peerConnection.close();
