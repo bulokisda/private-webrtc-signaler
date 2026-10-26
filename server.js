@@ -28,32 +28,53 @@ server.on('connection', (ws) => {
         }
         
         if (data.type === 'offer') {
-            if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                tabletClient.send(JSON.stringify(data));
+            // FIXED: If the tablet sends the offer, forward it to the browser. Otherwise send it to the tablet.
+            if (ws === tabletClient) {
+                if (browserClient && browserClient.readyState === WebSocket.OPEN) {
+                    console.log("Routing tablet offer to browser.");
+                    browserClient.send(JSON.stringify(data));
+                } else {
+                    console.log("Tablet tried to call, but browser is offline.");
+                }
             } else {
-                console.log("Tablet not ready. Queueing offer payload.");
-                pendingOffer = data; // Buffer the signal safely
+                if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
+                    console.log("Routing browser offer to tablet.");
+                    tabletClient.send(JSON.stringify(data));
+                } else {
+                    console.log("Tablet not ready. Queueing offer payload.");
+                    pendingOffer = data; // Buffer the signal safely
+                }
             }
         } else if (data.type === 'candidate') {
-            if (data.target === 'tablet' && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                tabletClient.send(JSON.stringify(data));
-            } else if (browserClient && browserClient.readyState === WebSocket.OPEN) {
-                browserClient.send(JSON.stringify(data));
+            // FIXED: Cleaned up bidirectional ICE routing logic using absolute client tracking structures
+            if (ws === browserClient) {
+                if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
+                    tabletClient.send(JSON.stringify(data));
+                }
+            } else if (ws === tabletClient) {
+                if (browserClient && browserClient.readyState === WebSocket.OPEN) {
+                    browserClient.send(JSON.stringify(data));
+                }
             }
         } else if (data.type === 'answer') {
             if (browserClient && browserClient.readyState === WebSocket.OPEN) {
+                console.log("Routing answer payload back to browser.");
                 browserClient.send(JSON.stringify(data));
             }
         }
     });
 
     ws.on('close', () => {
-        if (ws === browserClient) browserClient = null;
+        if (ws === browserClient) {
+            console.log("Browser disconnected.");
+            browserClient = null;
+        }
         if (ws === tabletClient) {
+            console.log("Tablet disconnected.");
             tabletClient = null;
             pendingOffer = null;
         }
     });
 });
 
-console.log("State-queued switchboard active.");
+console.log("State-queued bidirectional switchboard active.");
