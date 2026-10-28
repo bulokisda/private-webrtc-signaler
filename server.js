@@ -71,12 +71,25 @@ wss.on('connection', (ws) => {
 
                 case 'hangup':
                     if (data.targetId) {
+                        // Targeted point-to-point drop
                         const target = clients.get(data.targetId);
                         if (target && target.socket.readyState === WebSocket.OPEN) {
                             target.socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
                         }
+                    } else {
+                        // Broad Room Teardown Notification (Client clicked Leave Room)
+                        console.log(`Node explicitly requested global room teardown: ${clientId}`);
+                        clients.delete(clientId); // Clean them out of registry memory instantly
+                        
+                        clients.forEach((info) => {
+                            if (info.socket.readyState === WebSocket.OPEN) {
+                                info.socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
+                            }
+                        });
+                        broadcastPeerList(); // Instantly update peer list across surviving nodes
                     }
                     break;
+
             }
         } catch (e) {
             console.error("Signaling error:", e);
