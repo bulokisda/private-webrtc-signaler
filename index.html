@@ -29,8 +29,8 @@
         }
 
         ws.onmessage = async (event) => {
-            // Extract the raw string payload from the event container first
-            const data = JSON.parse(event.data); //  Fixed
+            const data = JSON.parse(event.data);
+            console.log("!! BROWSER RECEIVED WEBRTC PACKET: ", data);
             
             switch (data.type) {
                 case 'registered':
@@ -40,12 +40,41 @@
                     break;
         
                 case 'answer':
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                    try {
+                        // Ensure we supply a clean, strict RTCSessionDescriptionInit dictionary object literal
+                        const sessionDescriptionInit = {
+                            type: 'answer',
+                            sdp: (typeof data.sdp === 'object' && data.sdp.sdp) ? data.sdp.sdp : data.sdp
+                        };
+                        
+                        await peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDescriptionInit));
+                        console.log("✅ Remote SDP Description applied to PeerConnection instance successfully!");
+                    } catch (err) {
+                        console.error("❌ Handshake failure during remote description construction:", err);
+                    }
                     break;
         
                 case 'ice-candidate':
-                    if (peerConnection && data.candidate) {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    // Prevent candidate ingestion crashes by ensuring the handshake has settled first
+                    if (peerConnection && peerConnection.remoteDescription && data.candidate) {
+                        try {
+                            let incomingCandidate = null;
+                            
+                            // Fallback unpacking checks to handle nested dictionary formatting gracefully
+                            if (data.candidate.candidate) {
+                                incomingCandidate = new RTCIceCandidate(data.candidate);
+                            } else {
+                                incomingCandidate = new RTCIceCandidate({
+                                    candidate: data.candidate,
+                                    sdpMid: data.sdpMid || "",
+                                    sdpMLineIndex: data.sdpMLineIndex || 0
+                                });
+                            }
+                            
+                            await peerConnection.addIceCandidate(incomingCandidate);
+                        } catch (candidateErr) {
+                            console.warn("Skipped dynamic track candidate adjustment layout:", candidateErr);
+                        }
                     }
                     break;
         
@@ -54,6 +83,7 @@
                     break;
             }
         };
+
 
         document.getElementById('callBtn').onclick = async () => {
             peerConnection = new RTCPeerConnection(rtcConfig);
