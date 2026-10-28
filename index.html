@@ -7,7 +7,7 @@
     </style>
 </head>
 <body>
-    <h2>WebRTC 5</h2>
+    <h2>WebRTC 6</h2>
     <video id="localVideo" autoplay playsinline muted></video>
     <video id="remoteVideo" autoplay playsinline></video>
     <br>
@@ -20,7 +20,20 @@
         let myId = null;
         const targetId = 'tablet'; // Flutter app identifier
         
-        const rtcConfig = { iceServers: [{ urls: 'stun:google.com' }] };
+        // Change your current configuration to this strict structural object definition:
+        const rtcConfig = {
+            iceServers: [
+                {
+                    urls: [
+                        'stun:://google.com',
+                        'stun:://google.com',
+                        'stun:://google.com'
+                    ]
+                }
+            ],
+            iceCandidatePoolSize: 10
+        };
+
 
         async function init() {
             localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
