@@ -7,7 +7,7 @@
     </style>
 </head>
 <body>
-    <h2>WebRTC 6</h2>
+    <h2>WebRTC 7</h2>
     <video id="localVideo" autoplay playsinline muted></video>
     <video id="remoteVideo" autoplay playsinline></video>
     <br>
@@ -24,15 +24,14 @@
         const rtcConfig = {
             iceServers: [
                 {
-                    urls: [
-                        'stun:://google.com',
-                        'stun:://google.com',
-                        'stun:://google.com'
-                    ]
+                    urls: 'stun:://google.com'
+                },
+                {
+                    urls: 'stun:://google.com'
                 }
-            ],
-            iceCandidatePoolSize: 10
+            ]
         };
+
 
 
         async function init() {
