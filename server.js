@@ -20,6 +20,17 @@ function broadcastPeerList() {
     });
 }
 
+// PERIODIC CLEANUP INTERVAL (Pings clients every 5 seconds to wipe dead tabs instantly)
+setInterval(() => {
+    clients.forEach((info, id) => {
+        if (info.socket.readyState !== WebSocket.OPEN) {
+            console.log(`Sweeping dead socket from memory registry: ${id}`);
+            clients.delete(id);
+            broadcastPeerList();
+        }
+    });
+}, 5000);
+
 wss.on('connection', (ws) => {
     let clientId = null;
 
@@ -44,11 +55,10 @@ wss.on('connection', (ws) => {
                     broadcastPeerList();
                     break;
 
-                // MANUAL CALL SIGNALS: Strict point-to-point forwarding
                 case 'offer':
                 case 'answer':
                 case 'ice-candidate':
-                case 'call-decline': // Added explicit decline event
+                case 'call-decline':
                     data.senderId = clientId;
                     const targetId = data.targetId;
                     if (!targetId) break;
@@ -75,7 +85,10 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         if (clientId) {
+            console.log(`Connection dropped by client layout layer: ${clientId}`);
             clients.delete(clientId);
+            
+            // Notify surviving nodes to instantly drop video feeds for this ID
             clients.forEach((info) => {
                 if (info.socket.readyState === WebSocket.OPEN) {
                     info.socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
