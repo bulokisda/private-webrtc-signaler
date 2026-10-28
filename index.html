@@ -12,7 +12,7 @@
     </style>
 </head>
 <body>
-    <h2>Mesh 3</h2>
+    <h2>Mesh 4</h2>
     <div>My Connection Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
     
     <div class="grid-container" id="videoGrid">
@@ -103,7 +103,11 @@
                 case 'answer':
                     const pcAnswer = peerConnections.get(senderId);
                     if (pcAnswer) {
-                        if (pcAnswer.signalingState === "stable") break;
+                        // Core Fix: Stop execution immediately if the state machine has moved past negotiation
+                        if (pcAnswer.signalingState === "stable" || pcAnswer.remoteDescription) {
+                            console.log("Ignored racing duplicate answer payload from node: " + senderId);
+                            break;
+                        }
                         try {
                             const rtcAnswer = new RTCSessionDescription({ type: 'answer', sdp: data.sdp });
                             await pcAnswer.setRemoteDescription(rtcAnswer);
@@ -113,6 +117,7 @@
                         }
                     }
                     break;
+
         
                 case 'ice-candidate':
                     const pcCandidate = peerConnections.get(senderId);
