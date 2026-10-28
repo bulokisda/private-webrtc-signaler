@@ -162,7 +162,12 @@
                     break;
         
                 case 'hangup':
-                    teardownMeshPeer(senderId);
+                    // Ensure we capture either key mapping variation cleanly
+                    const peerToDisconnect = data.senderId || data.targetId;
+                    console.log("Remote peer requested hangup teardown: " + peerToDisconnect);
+                    if (peerToDisconnect) {
+                        teardownMeshPeer(peerToDisconnect);
+                    }
                     break;
             }
         };
@@ -278,15 +283,38 @@
         }
 
         function teardownMeshPeer(peerId) {
+            console.log("Executing teardown on local peer reference structures for: " + peerId);
+            
             const pc = peerConnections.get(peerId);
             if (pc) { 
-                pc.getReceivers().forEach(receiver => { if (receiver.track) receiver.track.stop(); });
-                pc.close(); 
+                try {
+                    pc.getReceivers().forEach(receiver => { 
+                        if (receiver.track) receiver.track.stop(); 
+                    });
+                    pc.close(); 
+                } catch (e) {
+                    console.warn("Context cleanup warning during track release: ", e);
+                }
                 peerConnections.delete(peerId); 
             }
+            
+            // Completely strip the video element box container from the DOM grid layout
             const box = document.getElementById("box_" + peerId);
-            if (box) box.remove();
+            if (box) {
+                box.remove();
+            }
+            
+            // FIX: Force the button to toggle back to a standard "Call" action state
             togglePeerButton(peerId, false);
+            
+            // FIX: Trigger a UI re-render of the list if we are using cached data
+            // This stops a terminated connection from rendering as "Hangup" or staying active
+            const btn = document.getElementById(`btn_${peerId}`);
+            if (btn) {
+                btn.innerText = "Call";
+                btn.className = "";
+                btn.onclick = () => initiateOutboundCall(peerId);
+            }
         }
     </script>
 
