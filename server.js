@@ -12,9 +12,9 @@ wss.on('connection', (ws) => {
 
         switch (data.type) {
             case 'register-tablet':
-                clientId = 'tablet';
+                clientId = data.id || 'tablet'; // Read the explicit target ID parameter safely
                 clients.set(clientId, ws);
-                console.log('Tablet registered');
+                console.log(`Tablet registered securely as node: ${clientId}`);
                 break;
 
             case 'register-browser':
