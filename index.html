@@ -85,15 +85,27 @@
         };
 
 
+        // Update the 'Call Tablet' button click logic in your browser
         document.getElementById('callBtn').onclick = async () => {
             peerConnection = new RTCPeerConnection(rtcConfig);
-
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
+        
+            // 1. ADD TRACKS FIRST: Loop through and attach camera/mic data to the connection object
+            if (localStream) {
+                localStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, localStream);
+                    console.log("Attached local browser track to PeerConnection: " + track.kind);
+                });
+            }
+        
+            // 2. Bind the remote stream track listener
             peerConnection.ontrack = (event) => {
-                document.getElementById('remoteVideo').srcObject = event.streams[0];
+                console.log("📺 Browser intercepted remote stream track matrix!");
+                const remoteVideo = document.getElementById('remoteVideo');
+                if (event.streams && event.streams[0]) {
+                    remoteVideo.srcObject = event.streams[0];
+                }
             };
-
+        
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
                     ws.send(JSON.stringify({
@@ -103,16 +115,18 @@
                     }));
                 }
             };
-
+        
+            // 3. CREATE OFFER LAST: Now the offer will accurately describe the video streams
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
-
+        
             ws.send(JSON.stringify({
                 type: 'offer',
                 targetId: targetId,
                 sdp: offer.sdp
             }));
         };
+
 
         function handleRemoteHangup() {
             if (peerConnection) {
