@@ -7,7 +7,7 @@
     </style>
 </head>
 <body>
-    <h2>WebRTC 4</h2>
+    <h2>WebRTC 5</h2>
     <video id="localVideo" autoplay playsinline muted></video>
     <video id="remoteVideo" autoplay playsinline></video>
     <br>
@@ -103,12 +103,15 @@
         
             // 2. Bind the remote stream track listener
             peerConnection.ontrack = (event) => {
-                console.log("📺 Browser intercepted remote stream track matrix!");
+                console.log("📺 Browser intercepted remote stream track matrix!", event.streams);
                 const remoteVideo = document.getElementById('remoteVideo');
+                
+                // Ensure we explicitly assign the first available stream array block to the video DOM element
                 if (event.streams && event.streams[0]) {
                     remoteVideo.srcObject = event.streams[0];
                 }
             };
+
         
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
