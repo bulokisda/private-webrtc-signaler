@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>WebRTC 1</title>
+    <title>WebRTC Manual Mesh Node</title>
     <style>
         body { font-family: sans-serif; background: #121212; color: #fff; margin: 20px; }
         .grid-container { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; }
@@ -11,17 +11,26 @@
         .peer-label { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
         .peer-list-panel { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
         .peer-row { display: flex; align-items: center; justify-content: space-between; max-width: 400px; margin-bottom: 8px; background: #2a2a2a; padding: 8px; border-radius: 4px; }
-        button { background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+        .privacy-panel { background: #222; border: 1px solid #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 15px; }
+        button { background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        button:disabled { background: #444; color: #888; cursor: not-allowed; }
         button.hangup-btn { background: #f44336; }
+        button.privacy-btn { background: #2196F3; }
+        button.privacy-btn.active { background: #f44336; }
     </style>
 </head>
 <body>
-    <h2>Manual Calling 2</h2>
-    <div>My Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
+    <h2>Calling 1</h2>
+    
+    <!-- Privacy Control Panel Layer -->
+    <div class="privacy-panel">
+        <button id="mediaToggleBtn" class="privacy-btn" onclick="toggleLocalMedia()">Start Camera & Join Room</button>
+        <div>Status: <strong id="myIdDisplay" style="color: #ff9800;">Offline (Privacy Mode)</strong></div>
+    </div>
     
     <div class="peer-list-panel">
         <h3>Available Mesh Peers</h3>
-        <div id="peerListContainer">No other peers online.</div>
+        <div id="peerListContainer">Join the room to view active peers.</div>
     </div>
     
     <div class="grid-container" id="videoGrid">
@@ -31,27 +40,76 @@
         </div>
     </div>
 
+
     <script>
         const ws = new WebSocket('wss://family-video-signaler.onrender.com');
         const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
-        let localStream;
+        let localStream = null;
         let myId = null;
+        let isMediaActive = false;
         const peerConnections = new Map();
 
-        async function init() {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                document.getElementById('localVideo').srcObject = localStream;
-                ws.send(JSON.stringify({ type: 'register-browser' }));
-            } catch (err) {
-                console.error("Camera blocked:", err);
-                ws.send(JSON.stringify({ type: 'register-browser' }));
+        // MANAGE PRIVACY & HARDWARE TOGGLE
+        async function toggleLocalMedia() {
+            const btn = document.getElementById('mediaToggleBtn');
+            
+            if (!isMediaActive) {
+                try {
+                    console.log("User requested camera access. Launching hardware layers...");
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                    document.getElementById('localVideo').srcObject = localStream;
+                    
+                    isMediaActive = true;
+                    btn.innerText = "Stop Camera & Leave Room";
+                    btn.className = "privacy-btn active";
+                    document.getElementById('myIdDisplay').innerText = "Registering...";
+                    
+                    // Explicitly register now that tracks are safe and present
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'register-browser' }));
+                    }
+                } catch (err) {
+                    console.error("Camera access denied or blocked by user:", err);
+                    alert("Could not start media: Please verify camera permissions.");
+                    document.getElementById('myIdDisplay').innerText = "Offline (Permissions Blocked)";
+                }
+            } else {
+                console.log("Privacy mode triggered. Destroying active pipelines...");
+                cleanupAllConnections();
+                
+                isMediaActive = false;
+                btn.innerText = "Start Camera & Join Room";
+                btn.className = "privacy-btn";
+                myId = null;
+                document.getElementById('myIdDisplay').innerText = "Offline (Privacy Mode)";
+                document.getElementById('myIdDisplay').style.color = "#ff9800";
+                document.getElementById('peerListContainer').innerText = "Join the room to view active peers.";
             }
         }
 
-        ws.onopen = () => { init(); };
+        ws.onclose = () => {
+            isMediaActive = false;
+            document.getElementById('myIdDisplay').innerText = "Disconnected from Signal Server";
+            document.getElementById('myIdDisplay').style.color = "#f44336";
+        };
 
+        function cleanupAllConnections() {
+            peerConnections.forEach((pc, peerId) => {
+                ws.send(JSON.stringify({ type: 'hangup', targetId: peerId }));
+                pc.close();
+                const box = document.getElementById("box_" + peerId);
+                if (box) box.remove();
+            });
+            peerConnections.clear();
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            document.getElementById('localVideo').srcObject = null;
+        }
+     
         ws.onmessage = async (event) => {
             const data = JSON.parse(event.data);
             const senderId = data.senderId;
@@ -59,14 +117,19 @@
             switch (data.type) {
                 case 'registered':
                     myId = data.id;
-                    document.getElementById('myIdDisplay').innerText = myId;
+                    const idDisplay = document.getElementById('myIdDisplay');
+                    idDisplay.innerText = "Connected as: " + myId;
+                    idDisplay.style.color = "#4CAF50";
                     break;
 
                 case 'mesh-peer-list':
-                    renderPeerDirectory(data.peers);
+                    if (isMediaActive) {
+                        renderPeerDirectory(data.peers);
+                    }
                     break;
         
                 case 'offer':
+                    if (!isMediaActive) break; 
                     console.log("Receiving call request from: " + senderId);
                     let pcOffer = createMeshPeerConnection(senderId);
                     try {
@@ -74,8 +137,6 @@
                         const answer = await pcOffer.createAnswer();
                         await pcOffer.setLocalDescription(answer);
                         ws.send(JSON.stringify({ type: 'answer', targetId: senderId, sdp: answer.sdp }));
-                        
-                        // Update button to Hangup state for the receiver
                         togglePeerButton(senderId, true);
                     } catch (err) {
                         console.error("Error answering call:", err);
@@ -83,17 +144,17 @@
                     break;
 
                 case 'answer':
+                    if (!isMediaActive) break;
                     const pcAnswer = peerConnections.get(senderId);
                     if (pcAnswer) {
                         await pcAnswer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
                         console.log("Call handshaking completed with: " + senderId);
-                        
-                        // Update button to Hangup state for the initiator
                         togglePeerButton(senderId, true);
                     }
                     break;
 
                 case 'ice-candidate':
+                    if (!isMediaActive) break;
                     const pcCandidate = peerConnections.get(senderId);
                     if (pcCandidate && pcCandidate.remoteDescription && data.candidate) {
                         await pcCandidate.addIceCandidate(new RTCIceCandidate(data.candidate));
@@ -101,7 +162,6 @@
                     break;
         
                 case 'hangup':
-                    console.log("Remote peer hung up: " + senderId);
                     teardownMeshPeer(senderId);
                     break;
             }
@@ -118,7 +178,6 @@
                     const row = document.createElement('div');
                     row.className = 'peer-row';
                     
-                    // Keep the state of the button if we are already connected to this peer
                     const isConnected = peerConnections.has(peer.id);
                     const btnText = isConnected ? "Hangup" : "Call";
                     const btnClass = isConnected ? "hangup-btn" : "";
@@ -141,17 +200,16 @@
             if (isConnected) {
                 btn.innerText = "Hangup";
                 btn.className = "hangup-btn";
-                btn.disabled = false;
                 btn.onclick = () => handleManualHangup(peerId);
             } else {
                 btn.innerText = "Call";
                 btn.className = "";
-                btn.disabled = false;
                 btn.onclick = () => initiateOutboundCall(peerId);
             }
         }
 
         async function initiateOutboundCall(targetPeerId) {
+            if(!isMediaActive) return;
             console.log("User clicked call button. Initiating pipeline to: " + targetPeerId);
             const btn = document.getElementById(`btn_${targetPeerId}`);
             if (btn) { btn.innerText = "Calling..."; btn.disabled = true; }
@@ -167,14 +225,8 @@
             }
         }
 
-        // USER INITIATED INBOUND/OUTBOUND TEARDOWN
         function handleManualHangup(targetPeerId) {
-            console.log("User clicked hangup button for: " + targetPeerId);
-            
-            // 1. Tell the server to alert the remote node to tear down its pipeline
             ws.send(JSON.stringify({ type: 'hangup', targetId: targetPeerId }));
-            
-            // 2. Tear down our local connection for this peer
             teardownMeshPeer(targetPeerId);
         }
 
@@ -197,9 +249,7 @@
             };
 
             pc.ontrack = (event) => {
-                console.log("Inbound tracks arrived from: " + peerId);
                 let videoElement = document.getElementById("video_" + peerId);
-                
                 if (!videoElement) {
                     const grid = document.getElementById('videoGrid');
                     const box = document.createElement('div');
@@ -219,7 +269,6 @@
                     box.appendChild(label);
                     grid.appendChild(box);
                 }
-
                 if (event.streams && event.streams[0]) {
                     videoElement.srcObject = event.streams[0];
                 }
@@ -231,19 +280,12 @@
         function teardownMeshPeer(peerId) {
             const pc = peerConnections.get(peerId);
             if (pc) { 
-                // Stop remote tracks flowing into this connection
-                pc.getReceivers().forEach(receiver => {
-                    if (receiver.track) receiver.track.stop();
-                });
+                pc.getReceivers().forEach(receiver => { if (receiver.track) receiver.track.stop(); });
                 pc.close(); 
                 peerConnections.delete(peerId); 
             }
-            
-            // Remove video from layout grid
             const box = document.getElementById("box_" + peerId);
             if (box) box.remove();
-            
-            // Reset button state
             togglePeerButton(peerId, false);
         }
     </script>
