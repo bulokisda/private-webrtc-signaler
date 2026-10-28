@@ -12,7 +12,7 @@
     </style>
 </head>
 <body>
-    <h2>Mesh 2</h2>
+    <h2>Mesh 3</h2>
     <div>My Connection Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
     
     <div class="grid-container" id="videoGrid">
@@ -29,13 +29,10 @@
         const rtcConfig = {
             iceServers: [
                 {
-                    urls: 'stun:://google.com'
+                    urls: 'stun:stun.l.google.com:19302'
                 },
                 {
-                    urls: 'stun:://google.com'
-                },
-                {
-                    urls: 'stun:://google.com'
+                    urls: 'stun:stun1.l.google.com:19302'
                 }
             ]
         };
