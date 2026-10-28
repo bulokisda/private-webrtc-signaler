@@ -1,95 +1,69 @@
 const WebSocket = require('ws');
-const server = new WebSocket.Server({ port: process.env.PORT || 8080 });
+const wss = new WebSocket.Server({ port: 8080 });
 
-let browserClient = null;
-let tabletClient = null;
-let pendingOffer = null;
+// Track active connections
+const clients = new Map(); // Store as id -> socket
 
-// New helper to broadcast live availability changes to both clients
-function broadcastPresence() {
-    const isBrowserOpen = browserClient && browserClient.readyState === WebSocket.OPEN;
-    const isTabletOpen = tabletClient && tabletClient.readyState === WebSocket.OPEN;
+wss.on('connection', (ws) => {
+    let clientId = null;
 
-    if (isBrowserOpen) {
-        browserClient.send(JSON.stringify({ 
-            type: 'partner-status', 
-            online: isTabletOpen 
-        }));
-    }
-    if (isTabletOpen) {
-        tabletClient.send(JSON.stringify({ 
-            type: 'partner-status', 
-            online: isBrowserOpen 
-        }));
-    }
-}
-
-server.on('connection', (ws) => {
     ws.on('message', (message) => {
         const data = JSON.parse(message);
-        
-        if (data.type === 'register-browser') {
-            browserClient = ws;
-            console.log("Browser connected.");
-            broadcastPresence(); // Trigger presence check
-        } else if (data.type === 'register-tablet') {
-            tabletClient = ws;
-            console.log("Tablet connected and verified.");
-            broadcastPresence(); // Trigger presence check
-            
-            if (pendingOffer && tabletClient.readyState === WebSocket.OPEN) {
-                console.log("Flushing queued offer to tablet.");
-                tabletClient.send(JSON.stringify(pendingOffer));
-                pendingOffer = null;
-            }
-        }
-        
-        if (data.type === 'offer') {
-            if (ws === tabletClient) {
-                if (browserClient && browserClient.readyState === WebSocket.OPEN) {
-                    console.log("Routing tablet offer to browser.");
-                    browserClient.send(JSON.stringify(data));
-                } else {
-                    console.log("Tablet tried to call, but browser is offline.");
+
+        switch (data.type) {
+            case 'register-tablet':
+                clientId = 'tablet';
+                clients.set(clientId, ws);
+                console.log('Tablet registered');
+                break;
+
+            case 'register-browser':
+                clientId = 'browser_user_' + Math.random().toString(36).substr(2, 5);
+                clients.set(clientId, ws);
+                console.log(`Browser registered: ${clientId}`);
+                // Tell the browser its own ID
+                ws.send(JSON.stringify({ type: 'registered', id: clientId }));
+                break;
+
+            case 'offer':
+            case 'answer':
+            case 'ice-candidate':
+                // Attach who sent it
+                data.senderId = clientId;
+                
+                // Route directly to the intended recipient
+                const targetSocket = clients.get(data.targetId || 'tablet');
+                if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+                    targetSocket.send(JSON.stringify(data));
                 }
-            } else {
-                if (tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                    console.log("Routing browser offer to tablet.");
-                    tabletClient.send(JSON.stringify(data));
+                break;
+
+            case 'ping':
+                ws.send(JSON.stringify({ type: 'pong' }));
+                break;
+
+            case 'hangup':
+                if (data.targetId) {
+                    const tSocket = clients.get(data.targetId);
+                    if (tSocket) tSocket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
                 } else {
-                    console.log("Tablet not ready. Queueing offer payload.");
-                    pendingOffer = data;
+                    // Broadcast hangup if no specific target
+                    clients.forEach((socket, id) => {
+                        if (id !== clientId) socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
+                    });
                 }
-            }
-        } else if (data.type === 'candidate') {
-            if (ws === browserClient && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                tabletClient.send(JSON.stringify(data));
-            } else if (ws === tabletClient && browserClient && browserClient.readyState === WebSocket.OPEN) {
-                browserClient.send(JSON.stringify(data));
-            }
-        } else if (data.type === 'answer') {
-            if (ws === tabletClient && browserClient && browserClient.readyState === WebSocket.OPEN) {
-                browserClient.send(JSON.stringify(data));
-            } else if (ws === browserClient && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                tabletClient.send(JSON.stringify(data));
-            }
-        } else if (data.type === 'hangup') {
-            if (ws === tabletClient && browserClient && browserClient.readyState === WebSocket.OPEN) {
-                browserClient.send(JSON.stringify({ type: 'hangup' }));
-            } else if (ws === browserClient && tabletClient && tabletClient.readyState === WebSocket.OPEN) {
-                tabletClient.send(JSON.stringify({ type: 'hangup' }));
-            }
+                break;
         }
     });
 
     ws.on('close', () => {
-        if (ws === browserClient) browserClient = null;
-        if (ws === tabletClient) {
-            tabletClient = null;
-            pendingOffer = null;
+        if (clientId) {
+            clients.delete(clientId);
+            console.log(`${clientId} disconnected`);
+            // Notify other peers
+            clients.forEach((socket) => {
+                socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
+            });
         }
-        broadcastPresence(); // Trigger updates when a client drops off natively
     });
 });
-
-console.log("State-queued bidirectional switchboard active.");
