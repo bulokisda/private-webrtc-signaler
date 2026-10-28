@@ -20,7 +20,7 @@
     </style>
 </head>
 <body>
-    <h2>Calling 5</h2>
+    <h2>Calling 6</h2>
     
     <!-- Privacy Control Panel Layer -->
     <div class="privacy-panel">
@@ -81,7 +81,9 @@
                 isMediaActive = false;
                 btn.innerText = "Start Camera & Join Room";
                 btn.className = "privacy-btn";
-                myId = null;
+                
+                // Clear state values completely to prevent ghost redraw updates
+                myId = null; 
                 document.getElementById('myIdDisplay').innerText = "Offline (Privacy Mode)";
                 document.getElementById('myIdDisplay').style.color = "#ff9800";
                 document.getElementById('peerListContainer').innerText = "Join the room to view active peers.";
@@ -95,9 +97,22 @@
         };
 
         function cleanupAllConnections() {
+            console.log("Dismantling room workspace, closing active channels...");
+            
+            // Explicitly tell the server we are leaving before cutting connections
+            if (ws && ws.readyState === WebSocket.OPEN && myId) {
+                // Sending an explicit teardown notify message forces the server to drop our registration instantly
+                ws.send(JSON.stringify({ type: 'hangup', targetId: null }));
+            }
+
             peerConnections.forEach((pc, peerId) => {
-                ws.send(JSON.stringify({ type: 'hangup', targetId: peerId }));
-                pc.close();
+                try {
+                    pc.onicecandidate = null;
+                    pc.ontrack = null;
+                    pc.close();
+                } catch(e) { 
+                    console.warn(e); 
+                }
                 const box = document.getElementById("box_" + peerId);
                 if (box) box.remove();
             });
