@@ -40,19 +40,23 @@
                     break;
         
                 case 'answer':
+                    // If we already completed the handshake state path, ignore duplicate packet traffic
+                    if (peerConnection.signalingState === "stable") {
+                        console.log("Skipped duplicate answer envelope.");
+                        break;
+                    }
                     try {
-                        // Ensure we supply a clean, strict RTCSessionDescriptionInit dictionary object literal
                         const sessionDescriptionInit = {
                             type: 'answer',
                             sdp: (typeof data.sdp === 'object' && data.sdp.sdp) ? data.sdp.sdp : data.sdp
                         };
-                        
                         await peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDescriptionInit));
                         console.log("✅ Remote SDP Description applied to PeerConnection instance successfully!");
                     } catch (err) {
                         console.error("❌ Handshake failure during remote description construction:", err);
                     }
                     break;
+
         
                 case 'ice-candidate':
                     // Prevent candidate ingestion crashes by ensuring the handshake has settled first
