@@ -1,12 +1,9 @@
 const WebSocket = require('ws');
 const wss = new WebSocket.Server({ port: 8080 });
 
-// Track active connections map (Store as id -> { socket: ws, type: string })
 const clients = new Map();
+console.log("Manual Mesh Signaling Engine active on port 8080...");
 
-console.log("Mesh Signaling Server active on port 8080...");
-
-// Helper helper to broadcast room state to all clients
 function broadcastPeerList() {
     const peerList = Array.from(clients.entries()).map(([id, info]) => ({
         id: id,
@@ -32,52 +29,34 @@ wss.on('connection', (ws) => {
 
             switch (data.type) {
                 case 'register-tablet':
-                    // Prevent collisions by ensuring unique tablet IDs if scaling
-                    clientId = data.id || 'tablet_node_' + Math.random().toString(36).substr(2, 5);
+                    clientId = data.id || 'tablet_' + Math.random().toString(36).substr(2, 5);
                     clients.set(clientId, { socket: ws, type: 'tablet' });
-                    console.log(`Tablet registered successfully as node: ${clientId}`);
-                    
-                    // Acknowledge registration down to the tablet isolate
+                    console.log(`Android 10 Node Registered: ${clientId}`);
                     ws.send(JSON.stringify({ type: 'registered', id: clientId }));
-                    
-                    // Trigger dynamic mesh discovery update
                     broadcastPeerList();
                     break;
 
                 case 'register-browser':
-                    clientId = 'browser_node_' + Math.random().toString(36).substr(2, 5);
+                    clientId = 'browser_' + Math.random().toString(36).substr(2, 5);
                     clients.set(clientId, { socket: ws, type: 'browser' });
-                    console.log(`Browser registered successfully as node: ${clientId}`);
-                    
-                    // Reply to the browser with its assigned identity
+                    console.log(`Web Browser Node Registered: ${clientId}`);
                     ws.send(JSON.stringify({ type: 'registered', id: clientId }));
-                    
-                    // Trigger dynamic mesh discovery update
                     broadcastPeerList();
                     break;
 
+                // MANUAL CALL SIGNALS: Strict point-to-point forwarding
                 case 'offer':
                 case 'answer':
                 case 'ice-candidate':
+                case 'call-decline': // Added explicit decline event
                     data.senderId = clientId;
-                    
-                    // STRICT ROUTING: Require explicit targets. No more blind tablet fallbacks.
                     const targetId = data.targetId;
-                    if (!targetId) {
-                        console.log(`Warning: Dropped ${data.type} frame due to missing targetId from ${clientId}`);
-                        break;
-                    }
+                    if (!targetId) break;
 
                     const targetClient = clients.get(targetId);
                     if (targetClient && targetClient.socket.readyState === WebSocket.OPEN) {
                         targetClient.socket.send(JSON.stringify(data));
-                    } else {
-                        console.log(`Warning: Target node (${targetId}) is unreachable or offline.`);
                     }
-                    break;
-
-                case 'ping':
-                    ws.send(JSON.stringify({ type: 'pong' }));
                     break;
 
                 case 'hangup':
@@ -86,33 +65,22 @@ wss.on('connection', (ws) => {
                         if (target && target.socket.readyState === WebSocket.OPEN) {
                             target.socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
                         }
-                    } else {
-                        clients.forEach((info, id) => {
-                            if (id !== clientId && info.socket.readyState === WebSocket.OPEN) {
-                                info.socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
-                            }
-                        });
                     }
                     break;
             }
         } catch (e) {
-            console.error("Error decoding signaling frame:", e);
+            console.error("Signaling error:", e);
         }
     });
 
     ws.on('close', () => {
         if (clientId) {
             clients.delete(clientId);
-            console.log(`Node disconnected: ${clientId}`);
-            
-            // Immediately inform remaining mesh nodes to tear down specific WebRTC pipelines
             clients.forEach((info) => {
                 if (info.socket.readyState === WebSocket.OPEN) {
                     info.socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
                 }
             });
-
-            // Refresh room state across remaining clients
             broadcastPeerList();
         }
     });
