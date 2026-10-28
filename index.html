@@ -1,276 +1,97 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calling 1.8</title>
+    <title>WebRTC Browser Mesh Node</title>
     <style>
-        body { 
-            margin: 0; 
-            background: #111; 
-            font-family: sans-serif; 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
-            height: 100vh; 
-            color: white; 
-            overflow: hidden;
-        }
-        .video-container {
-            position: relative;
-            width: 90vw; 
-            height: 60vh; 
-            margin-bottom: 20px;
-        }
-        #remoteVideo { 
-            width: 100%; 
-            height: 100%; 
-            background: #222; 
-            border-radius: 12px; 
-            object-fit: cover; 
-        }
-        /* New Picture-in-Picture CSS Layout styling for your local camera */
-        #localVideo {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            width: 120px;
-            height: 160px;
-            background: #333;
-            border-radius: 8px;
-            object-fit: cover;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            transform: scaleX(-1); /* Mirrors the local camera preview naturally */
-            display: none; /* Hidden until a media track starts streaming */
-        }
-        button { 
-            width: 100px; 
-            height: 100px; 
-            border-radius: 50%; 
-            border: none; 
-            font-size: 36px; 
-            cursor: pointer; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            box-shadow: 0 8px 15px rgba(0,0,0,0.3);
-            transition: transform 0.1s ease;
-        }
-        button:active {
-            transform: scale(0.95);
-        }
-        .call-btn { background: #2ea44f; color: white; }
-        .hang-btn { background: #d73a49; color: white; }
+        video { width: 320px; height: 240px; background: #333; margin: 10px; border-radius: 8px; }
     </style>
 </head>
 <body>
-
-    <!-- Wrapped videos inside a shared relative container layer -->
-    <div class="video-container">
-        <video id="remoteVideo" autoplay playsinline></video>
-        <video id="localVideo" autoplay playsinline muted></video> <!-- muted stops local audio feedback loops -->
-    </div>
-    <div id="statusBadge" style="margin-bottom: 20px; font-weight: bold; font-size: 18px; color: #aaa;">
-        Tablet Status: <span id="statusText" style="color: #d73a49;">Offline 🔴</span>
-    </div>
-    
-    <button id="actionBtn" class="call-btn">📞</button>
+    <h2>Mesh WebRTC Controller</h2>
+    <video id="localVideo" autoplay playsinline muted></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+    <br>
+    <button id="callBtn" disabled>Call Tablet</button>
 
     <script>
-        const serverUrl = "wss://family-video-signaler.onrender.com";
-        const statusText = document.getElementById('statusText');
-        
+        const ws = new WebSocket('wss://://onrender.com');
         let localStream;
         let peerConnection;
-        let socket;
-        const remoteVideo = document.getElementById('remoteVideo');
-        const localVideo = document.getElementById('localVideo');
-        const actionBtn = document.getElementById('actionBtn');
-        let inCall = false;
-        let iceCandidateBuffer = []; 
+        let myId = null;
+        const targetId = 'tablet'; // Flutter app identifier
 
-        function initSocket() {
-            socket = new WebSocket(serverUrl);
-            
-            socket.onopen = () => {
-                console.log("Connected to live server switcher");
-                socket.send(JSON.stringify({ type: 'register-browser' }));
-                
-                setInterval(() => {
-                    if (socket.readyState === WebSocket.OPEN) {
-                        socket.send(JSON.stringify({ type: 'ping' }));
-                    }
-                }, 25000);
-            };
+        const rtcConfig = { iceServers: [{ urls: 'stun:://google.com' }] };
 
-            socket.onmessage = async (msg) => {
-                const data = JSON.parse(msg.data);
-                
-                if (data.type === 'tablet-online') {
-                    console.log("Tablet ready. Initializing handshake...");
-                } else if (data.type === 'offer') {
-                    console.log("Received incoming call offer from tablet");
-                    await handleIncomingOffer(data.sdp);
-                } else if (data.type === 'answer') {
-                    if (peerConnection && peerConnection.signalingState === "have-local-offer") {
-                        console.log("Received response answer token from tablet");
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-                        await flushIceBuffer();
-                    } else {
-                        console.log("Ignored loopback answer because connection is already stable.");
-                    }
-                } else if (data.type === 'hangup') {
-                    console.log("Partner hung up the call.");
-                    endCall(false);
-                } else if (data.type === 'candidate') {
-                    if (data.candidate) {
-                        const candidateObj = new RTCIceCandidate(data.candidate);
-                        if (peerConnection && peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
-                            await peerConnection.addIceCandidate(candidateObj).catch(e => console.error(e));
-                        } else {
-                            console.log("Buffering early ICE candidate safely...");
-                            iceCandidateBuffer.push(candidateObj);
-                        }
-                    }
-                }
-                if (data.type === 'partner-status') {
-                    if (data.online) {
-                        statusText.innerHTML = "Available 🟢";
-                        statusText.style.color = "#2ea44f";
-                        actionBtn.style.backgroundColor = "#2ea44f";
-                        actionBtn.disabled = false;
-                    } else {
-                        statusText.innerHTML = "Offline 🔴";
-                        statusText.style.color = "#d73a49";
-                        // Optional: styling adjustment if you want to visually restrict clicking while offline
-                        if(!inCall) {
-                            actionBtn.style.backgroundColor = "#555";
-                        }
-                    }
-                }
-            };
-
-            socket.onclose = () => {
-                console.log("Socket connection lost. Retrying hook...");
-                statusText.innerHTML = "Offline 🔴";
-                statusText.style.color = "#d73a49";
-                setTimeout(initSocket, 4000);
-            };
+        async function init() {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            document.getElementById('localVideo').srcObject = localStream;
+            ws.send(JSON.stringify({ type: 'register-browser' }));
         }
 
-        async function flushIceBuffer() {
-            if (iceCandidateBuffer.length > 0 && peerConnection) {
-                console.log(`Flushing ${iceCandidateBuffer.length} buffered ICE candidates.`);
-                for (const candidate of iceCandidateBuffer) {
-                    await peerConnection.addIceCandidate(candidate).catch(e => console.error(e));
-                }
-                iceCandidateBuffer = [];
-            }
-        }
+        ws.onmessage = async (message) => {
+            const data = JSON.parse(message);
 
-        async function initializeMediaAndConnection() {
-            console.log("Requesting hardware device permissions...");
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-            } catch (mediaErr) {
-                console.warn("Microphone blocked. Falling back to video-only.");
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-            }
-            
-            // FIXED: Map local camera hardware directly to your layout viewer window
-            localVideo.srcObject = localStream;
-            localVideo.style.display = "block"; // Show the local preview layout container
+            switch (data.type) {
+                case 'registered':
+                    myId = data.id;
+                    document.getElementById('callBtn').disabled = false;
+                    console.log("Registered on server as: " + myId);
+                    break;
 
-            peerConnection = new RTCPeerConnection({ iceServers: [] });
+                case 'answer':
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+                    break;
+
+                case 'ice-candidate':
+                    if (peerConnection && data.candidate) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    }
+                    break;
+
+                case 'hangup':
+                    handleRemoteHangup();
+                    break;
+            }
+        };
+
+        document.getElementById('callBtn').onclick = async () => {
+            peerConnection = new RTCPeerConnection(rtcConfig);
+
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
             peerConnection.ontrack = (event) => {
-                if (event.streams && event.streams[0]) {
-                    if (remoteVideo.srcObject !== event.streams[0]) {
-                        remoteVideo.srcObject = event.streams[0];
-                        console.log("Media track linked to canvas viewport successfully.");
-                    }
-                }
+                document.getElementById('remoteVideo').srcObject = event.streams[0];
             };
 
             peerConnection.onicecandidate = (event) => {
                 if (event.candidate) {
-                    socket.send(JSON.stringify({ 
-                        type: 'candidate', 
-                        candidate: event.candidate 
+                    ws.send(JSON.stringify({
+                        type: 'ice-candidate',
+                        targetId: targetId,
+                        candidate: event.candidate
                     }));
                 }
             };
-        }
 
-        async function startCall() {
-            try {
-                inCall = true;
-                actionBtn.className = "hang-btn";
-                actionBtn.innerHTML = "❌";
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
 
-                await initializeMediaAndConnection();
+            ws.send(JSON.stringify({
+                type: 'offer',
+                targetId: targetId,
+                sdp: offer.sdp
+            }));
+        };
 
-                const offer = await peerConnection.createOffer();
-                await peerConnection.setLocalDescription(offer);
-                socket.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
-                console.log("WebRTC offer dispatched to Render switchboard.");
-            } catch (err) {
-                console.error("Critical outgoing connection setup failure: ", err);
-                endCall();
-            }
-        }
-
-        async function handleIncomingOffer(sdp) {
-            try {
-                inCall = true;
-                actionBtn.className = "hang-btn";
-                actionBtn.innerHTML = "❌";
-
-                await initializeMediaAndConnection();
-
-                await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: sdp }));
-                await flushIceBuffer();
-
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                
-                socket.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
-                console.log("WebRTC answer dispatched back to tablet.");
-            } catch (err) {
-                console.error("Critical incoming connection setup failure: ", err);
-                endCall();
-            }
-        }
-
-        function endCall(sendSignal = true) {
-            if (sendSignal && socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({ type: 'hangup' }));
-            }
-
+        function handleRemoteHangup() {
             if (peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
             }
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
-            
-            // Re-hide local layout views during cleanup phases
-            remoteVideo.srcObject = null;
-            localVideo.srcObject = null;
-            localVideo.style.display = "none";
-            
-            actionBtn.className = "call-btn";
-            actionBtn.innerHTML = "📞";
-            inCall = false;
-            iceCandidateBuffer = [];
+            document.getElementById('remoteVideo').srcObject = null;
         }
 
-        actionBtn.onclick = () => { if (!inCall) { startCall(); } else { endCall(); } };
-        initSocket();
+        ws.onopen = () => { init(); };
     </script>
 </body>
 </html>
