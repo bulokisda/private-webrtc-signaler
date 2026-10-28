@@ -20,7 +20,7 @@
     </style>
 </head>
 <body>
-    <h2>Calling 4</h2>
+    <h2>Calling 5</h2>
     
     <!-- Privacy Control Panel Layer -->
     <div class="privacy-panel">
@@ -174,8 +174,18 @@
 
         function renderPeerDirectory(peers) {
             const container = document.getElementById('peerListContainer');
-            container.innerHTML = '';
+            container.innerHTML = ''; // Clears the list layout container completely
             let count = 0;
+
+            // TRACK AND PURGE STALE DOM VIDEO BOXES
+            // If a peer is no longer present in the official server list, drop their video panel instantly
+            const activePeerIds = peers.map(p => p.id);
+            peerConnections.forEach((pc, peerId) => {
+                if (!activePeerIds.includes(peerId)) {
+                    console.log("Cleaning up dead session discovered via registry mismatch: " + peerId);
+                    teardownMeshPeer(peerId);
+                }
+            });
 
             peers.forEach(peer => {
                 if (peer.id !== myId) {
@@ -197,6 +207,7 @@
             });
             if(count === 0) container.innerText = "No other peers online.";
         }
+
 
         function togglePeerButton(peerId, isConnected) {
             const btn = document.getElementById(`btn_${peerId}`);
