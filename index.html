@@ -12,7 +12,7 @@
     </style>
 </head>
 <body>
-    <h2>Mesh 1</h2>
+    <h2>Mesh 2</h2>
     <div>My Connection Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
     
     <div class="grid-container" id="videoGrid">
@@ -25,18 +25,21 @@
     <script>
         const ws = new WebSocket('wss://family-video-signaler.onrender.com');
         
+        // Clean structural definition unblocks the browser native parsing loop
         const rtcConfig = {
             iceServers: [
                 {
-                    urls: [
-                        'stun:://google.com',
-                        'stun:://google.com',
-                        'stun:://google.com'
-                    ]
+                    urls: 'stun:://google.com'
+                },
+                {
+                    urls: 'stun:://google.com'
+                },
+                {
+                    urls: 'stun:://google.com'
                 }
-            ],
-            iceCandidatePoolSize: 10
+            ]
         };
+
 
         let localStream;
         let myId = null;
