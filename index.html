@@ -2,41 +2,38 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>WebRTC Browser Mesh Node (Scale Architecture)</title>
+    <title>WebRTC 1</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #fff; margin: 20px; }
+        body { font-family: sans-serif; background: #121212; color: #fff; margin: 20px; }
         .grid-container { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; }
         .video-box { position: relative; width: 320px; height: 240px; background: #222; border-radius: 8px; overflow: hidden; }
         video { width: 100%; height: 100%; object-fit: cover; }
         .peer-label { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        .peer-list-panel { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .peer-row { display: flex; align-items: center; justify-content: space-between; max-width: 400px; margin-bottom: 8px; background: #2a2a2a; padding: 8px; border-radius: 4px; }
+        button { background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+        button.hangup-btn { background: #f44336; }
     </style>
 </head>
 <body>
-    <h2>Mesh 5</h2>
-    <div>My Connection Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
+    <h2>Manual Calling 1</h2>
+    <div>My Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
+    
+    <div class="peer-list-panel">
+        <h3>Available Mesh Peers</h3>
+        <div id="peerListContainer">No other peers online.</div>
+    </div>
     
     <div class="grid-container" id="videoGrid">
         <div class="video-box">
             <video id="localVideo" autoplay playsinline muted></video>
-            <div class="peer-label">Local Stream (Me)</div>
+            <div class="peer-label">Local Camera (Me)</div>
         </div>
     </div>
 
     <script>
         const ws = new WebSocket('wss://family-video-signaler.onrender.com');
-        
-        // Clean structural definition unblocks the browser native parsing loop
-        const rtcConfig = {
-            iceServers: [
-                {
-                    urls: 'stun:stun.l.google.com:19302'
-                },
-                {
-                    urls: 'stun:stun1.l.google.com:19302'
-                }
-            ]
-        };
-
+        const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
         let localStream;
         let myId = null;
@@ -44,100 +41,57 @@
 
         async function init() {
             try {
-                // 1. Force the engine to block until the hardware cameras are fully online
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
                 document.getElementById('localVideo').srcObject = localStream;
-                
-                // 2. ONLY register to the signaling engine AFTER our local tracks are ready to be attached
                 ws.send(JSON.stringify({ type: 'register-browser' }));
             } catch (err) {
-                console.error("Camera access blocked:", err);
-                // Fallback: register anyway if hardware fails so the room doesn't lock up
+                console.error("Camera blocked:", err);
                 ws.send(JSON.stringify({ type: 'register-browser' }));
             }
         }
-
 
         ws.onopen = () => { init(); };
 
         ws.onmessage = async (event) => {
             const data = JSON.parse(event.data);
-            console.log("!! BROWSER RECEIVED WEBRTC PACKET: ", data);
-            
             const senderId = data.senderId;
 
             switch (data.type) {
                 case 'registered':
                     myId = data.id;
                     document.getElementById('myIdDisplay').innerText = myId;
-                    console.log("Registered on server as: " + myId);
                     break;
 
                 case 'mesh-peer-list':
-                    data.peers.forEach(peer => {
-                        if (peer.id !== myId && !peerConnections.has(peer.id)) {
-                            console.log("Discovered active mesh peer node: " + peer.id + ". Initializing pipeline...");
-                            createMeshPeerConnection(peer.id, true);
-                        }
-                    });
+                    renderPeerDirectory(data.peers);
                     break;
         
                 case 'offer':
-                    console.log("Processing inbound configuration offer from: " + senderId);
-                    let pcOffer = peerConnections.get(senderId);
-                    if (!pcOffer) {
-                        pcOffer = createMeshPeerConnection(senderId, false);
-                    }
-                    
+                    console.log("Receiving call request from: " + senderId);
+                    // Generate connection state in inbound passive state
+                    let pcOffer = createMeshPeerConnection(senderId);
                     try {
-                        const rtcOffer = new RTCSessionDescription({ type: 'offer', sdp: data.sdp });
-                        await pcOffer.setRemoteDescription(rtcOffer);
-                        
+                        await pcOffer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
                         const answer = await pcOffer.createAnswer();
                         await pcOffer.setLocalDescription(answer);
-                        
-                        ws.send(JSON.stringify({
-                            type: 'answer',
-                            targetId: senderId,
-                            sdp: answer.sdp
-                        }));
+                        ws.send(JSON.stringify({ type: 'answer', targetId: senderId, sdp: answer.sdp }));
                     } catch (err) {
-                        console.error("Failed handling inbound setup offer pipeline:", err);
+                        console.error("Error answering call:", err);
                     }
                     break;
 
                 case 'answer':
                     const pcAnswer = peerConnections.get(senderId);
                     if (pcAnswer) {
-                        // Core Fix: Stop execution immediately if the state machine has moved past negotiation
-                        if (pcAnswer.signalingState === "stable" || pcAnswer.remoteDescription) {
-                            console.log("Ignored racing duplicate answer payload from node: " + senderId);
-                            break;
-                        }
-                        try {
-                            const rtcAnswer = new RTCSessionDescription({ type: 'answer', sdp: data.sdp });
-                            await pcAnswer.setRemoteDescription(rtcAnswer);
-                            console.log("Handshake connection established directly with target node: " + senderId);
-                        } catch (err) {
-                            console.error("Error applying remote response matrix layout:", err);
-                        }
+                        await pcAnswer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
+                        console.log("Call handshaking completed with: " + senderId);
                     }
                     break;
 
-        
                 case 'ice-candidate':
                     const pcCandidate = peerConnections.get(senderId);
                     if (pcCandidate && pcCandidate.remoteDescription && data.candidate) {
-                        try {
-                            const rawCand = data.candidate.candidate ? data.candidate : {
-                                candidate: data.candidate,
-                                sdpMid: data.sdpMid || "",
-                                sdpMLineIndex: data.sdpMLineIndex || 0
-                            };
-                            await pcCandidate.addIceCandidate(new RTCIceCandidate(rawCand));
-                        } catch (candidateErr) {
-                            console.warn("Dropped redundant transient network path option:", candidateErr);
-                        }
+                        await pcCandidate.addIceCandidate(new RTCIceCandidate(data.candidate));
                     }
                     break;
         
@@ -147,10 +101,50 @@
             }
         };
 
-        function createMeshPeerConnection(peerId, isInitiator) {
+        function renderPeerDirectory(peers) {
+            const container = document.getElementById('peerListContainer');
+            container.innerHTML = '';
+            let count = 0;
+
+            peers.forEach(peer => {
+                if (peer.id !== myId) {
+                    count++;
+                    const row = document.createElement('div');
+                    row.className = 'peer-row';
+                    row.innerHTML = `
+                        <span>${peer.id} (${peer.type})</span>
+                        <button id="btn_${peer.id}" onclick="initiateOutboundCall('${peer.id}')">Call</button>
+                    `;
+                    container.appendChild(row);
+                }
+            });
+            if(count === 0) container.innerText = "No other peers online.";
+        }
+
+        // USER INITIATED OUTBOUND PIPELINE
+        async function initiateOutboundCall(targetPeerId) {
+            console.log("User clicked call button. Initiating pipeline to: " + targetPeerId);
+            const btn = document.getElementById(`btn_${targetPeerId}`);
+            btn.innerText = "Calling...";
+            btn.disabled = true;
+
+            const pc = createMeshPeerConnection(targetPeerId);
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                ws.send(JSON.stringify({ type: 'offer', targetId: targetPeerId, sdp: offer.sdp }));
+            } catch (err) {
+                console.error("Failed creating outbound offer:", err);
+            }
+        }
+
+        function createMeshPeerConnection(peerId) {
+            if(peerConnections.has(peerId)) return peerConnections.get(peerId);
+
             const pc = new RTCPeerConnection(rtcConfig);
             peerConnections.set(peerId, pc);
 
+            // IMPORTANT CORE FIX: local tracks MUST be appended synchronously on creation
             if (localStream) {
                 localStream.getTracks().forEach(track => {
                     pc.addTrack(track, localStream);
@@ -159,21 +153,16 @@
 
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                    ws.send(JSON.stringify({
-                        type: 'ice-candidate',
-                        targetId: peerId,
-                        candidate: event.candidate
-                    }));
+                    ws.send(JSON.stringify({ type: 'ice-candidate', targetId: peerId, candidate: event.candidate }));
                 }
             };
 
             pc.ontrack = (event) => {
-                console.log("Target stream payload arrived from node: " + peerId);
+                console.log("Inbound tracks arrived from: " + peerId);
                 let videoElement = document.getElementById("video_" + peerId);
                 
                 if (!videoElement) {
                     const grid = document.getElementById('videoGrid');
-                    
                     const box = document.createElement('div');
                     box.className = 'video-box';
                     box.id = "box_" + peerId;
@@ -192,47 +181,21 @@
                     grid.appendChild(box);
                 }
 
-                // FIXED: Explicitly indexing the stream array to unblock rendering engine decoding
                 if (event.streams && event.streams[0]) {
                     videoElement.srcObject = event.streams[0];
                 }
             };
-
-            pc.oniceconnectionstatechange = () => {
-                console.log("[ICE State Change] Peer " + peerId + ": " + pc.iceConnectionState);
-            };
-
-            if (isInitiator) {
-                pc.onnegotiationneeded = async () => {
-                    try {
-                        const offer = await pc.createOffer();
-                        await pc.setLocalDescription(offer);
-                        ws.send(JSON.stringify({
-                            type: 'offer',
-                            targetId: peerId,
-                            sdp: offer.sdp
-                        }));
-                    } catch (err) {
-                        console.error("Negotiation setup offer crash layout loop:", err);
-                    }
-                };
-            }
 
             return pc;
         }
 
         function teardownMeshPeer(peerId) {
             const pc = peerConnections.get(peerId);
-            if (pc) {
-                pc.close();
-                peerConnections.delete(peerId);
-            }
-            
+            if (pc) { pc.close(); peerConnections.delete(peerId); }
             const box = document.getElementById("box_" + peerId);
-            if (box) {
-                box.remove();
-            }
-            console.log("Cleaned up node reference from active mesh layout: " + peerId);
+            if (box) box.remove();
+            const btn = document.getElementById(`btn_${peerId}`);
+            if (btn) { btn.innerText = "Call"; btn.disabled = false; }
         }
     </script>
 </body>
