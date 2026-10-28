@@ -16,7 +16,7 @@
     </style>
 </head>
 <body>
-    <h2>Manual Calling 1</h2>
+    <h2>Manual Calling 2</h2>
     <div>My Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
     
     <div class="peer-list-panel">
@@ -68,13 +68,15 @@
         
                 case 'offer':
                     console.log("Receiving call request from: " + senderId);
-                    // Generate connection state in inbound passive state
                     let pcOffer = createMeshPeerConnection(senderId);
                     try {
                         await pcOffer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
                         const answer = await pcOffer.createAnswer();
                         await pcOffer.setLocalDescription(answer);
                         ws.send(JSON.stringify({ type: 'answer', targetId: senderId, sdp: answer.sdp }));
+                        
+                        // Update button to Hangup state for the receiver
+                        togglePeerButton(senderId, true);
                     } catch (err) {
                         console.error("Error answering call:", err);
                     }
@@ -85,6 +87,9 @@
                     if (pcAnswer) {
                         await pcAnswer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
                         console.log("Call handshaking completed with: " + senderId);
+                        
+                        // Update button to Hangup state for the initiator
+                        togglePeerButton(senderId, true);
                     }
                     break;
 
@@ -96,6 +101,7 @@
                     break;
         
                 case 'hangup':
+                    console.log("Remote peer hung up: " + senderId);
                     teardownMeshPeer(senderId);
                     break;
             }
@@ -111,9 +117,16 @@
                     count++;
                     const row = document.createElement('div');
                     row.className = 'peer-row';
+                    
+                    // Keep the state of the button if we are already connected to this peer
+                    const isConnected = peerConnections.has(peer.id);
+                    const btnText = isConnected ? "Hangup" : "Call";
+                    const btnClass = isConnected ? "hangup-btn" : "";
+                    const clickAction = isConnected ? `handleManualHangup('${peer.id}')` : `initiateOutboundCall('${peer.id}')`;
+
                     row.innerHTML = `
                         <span>${peer.id} (${peer.type})</span>
-                        <button id="btn_${peer.id}" onclick="initiateOutboundCall('${peer.id}')">Call</button>
+                        <button id="btn_${peer.id}" class="${btnClass}" onclick="${clickAction}">${btnText}</button>
                     `;
                     container.appendChild(row);
                 }
@@ -121,12 +134,27 @@
             if(count === 0) container.innerText = "No other peers online.";
         }
 
-        // USER INITIATED OUTBOUND PIPELINE
+        function togglePeerButton(peerId, isConnected) {
+            const btn = document.getElementById(`btn_${peerId}`);
+            if (!btn) return;
+
+            if (isConnected) {
+                btn.innerText = "Hangup";
+                btn.className = "hangup-btn";
+                btn.disabled = false;
+                btn.onclick = () => handleManualHangup(peerId);
+            } else {
+                btn.innerText = "Call";
+                btn.className = "";
+                btn.disabled = false;
+                btn.onclick = () => initiateOutboundCall(peerId);
+            }
+        }
+
         async function initiateOutboundCall(targetPeerId) {
             console.log("User clicked call button. Initiating pipeline to: " + targetPeerId);
             const btn = document.getElementById(`btn_${targetPeerId}`);
-            btn.innerText = "Calling...";
-            btn.disabled = true;
+            if (btn) { btn.innerText = "Calling..."; btn.disabled = true; }
 
             const pc = createMeshPeerConnection(targetPeerId);
             try {
@@ -135,7 +163,19 @@
                 ws.send(JSON.stringify({ type: 'offer', targetId: targetPeerId, sdp: offer.sdp }));
             } catch (err) {
                 console.error("Failed creating outbound offer:", err);
+                togglePeerButton(targetPeerId, false);
             }
+        }
+
+        // USER INITIATED INBOUND/OUTBOUND TEARDOWN
+        function handleManualHangup(targetPeerId) {
+            console.log("User clicked hangup button for: " + targetPeerId);
+            
+            // 1. Tell the server to alert the remote node to tear down its pipeline
+            ws.send(JSON.stringify({ type: 'hangup', targetId: targetPeerId }));
+            
+            // 2. Tear down our local connection for this peer
+            teardownMeshPeer(targetPeerId);
         }
 
         function createMeshPeerConnection(peerId) {
@@ -144,7 +184,6 @@
             const pc = new RTCPeerConnection(rtcConfig);
             peerConnections.set(peerId, pc);
 
-            // IMPORTANT CORE FIX: local tracks MUST be appended synchronously on creation
             if (localStream) {
                 localStream.getTracks().forEach(track => {
                     pc.addTrack(track, localStream);
@@ -191,12 +230,25 @@
 
         function teardownMeshPeer(peerId) {
             const pc = peerConnections.get(peerId);
-            if (pc) { pc.close(); peerConnections.delete(peerId); }
+            if (pc) { 
+                // Stop remote tracks flowing into this connection
+                pc.getReceivers().forEach(receiver => {
+                    if (receiver.track) receiver.track.stop();
+                });
+                pc.close(); 
+                peerConnections.delete(peerId); 
+            }
+            
+            // Remove video from layout grid
             const box = document.getElementById("box_" + peerId);
             if (box) box.remove();
-            const btn = document.getElementById(`btn_${peerId}`);
-            if (btn) { btn.innerText = "Call"; btn.disabled = false; }
+            
+            // Reset button state
+            togglePeerButton(peerId, false);
         }
     </script>
+
+
+        
 </body>
 </html>
