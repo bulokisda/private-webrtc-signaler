@@ -1,161 +1,228 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>WebRTC Browser Mesh Node2</title>
+    <meta charset="UTF-8">
+    <title>WebRTC Browser Mesh Node (Scale Architecture)</title>
     <style>
-        video { width: 320px; height: 240px; background: #333; margin: 10px; border-radius: 8px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #fff; margin: 20px; }
+        .grid-container { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; }
+        .video-box { position: relative; width: 320px; height: 240px; background: #222; border-radius: 8px; overflow: hidden; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        .peer-label { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
     </style>
 </head>
 <body>
-    <h2>WebRTC 7</h2>
-    <video id="localVideo" autoplay playsinline muted></video>
-    <video id="remoteVideo" autoplay playsinline></video>
-    <br>
-    <button id="callBtn" disabled>Call Tablet</button>
+    <h2>Mesh Signaling Node Matrix</h2>
+    <div>My Connection Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
+    
+    <div class="grid-container" id="videoGrid">
+        <div class="video-box">
+            <video id="localVideo" autoplay playsinline muted></video>
+            <div class="peer-label">Local Stream (Me)</div>
+        </div>
+    </div>
 
     <script>
-        const ws = new WebSocket('wss://family-video-signaler.onrender.com');
-        let localStream;
-        let peerConnection;
-        let myId = null;
-        const targetId = 'tablet'; // Flutter app identifier
+        const ws = new WebSocket('wss://://onrender.com');
         
-        // Change your current configuration to this strict structural object definition:
         const rtcConfig = {
             iceServers: [
                 {
-                    urls: 'stun:://google.com'
-                },
-                {
-                    urls: 'stun:://google.com'
+                    urls: [
+                        'stun:://google.com',
+                        'stun:://google.com',
+                        'stun:://google.com'
+                    ]
                 }
-            ]
+            ],
+            iceCandidatePoolSize: 10
         };
 
-
+        let localStream;
+        let myId = null;
+        const peerConnections = new Map();
 
         async function init() {
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-            document.getElementById('localVideo').srcObject = localStream;
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+                document.getElementById('localVideo').srcObject = localStream;
+            } catch (err) {
+                console.error("Camera access blocked:", err);
+            }
             ws.send(JSON.stringify({ type: 'register-browser' }));
         }
+
+        ws.onopen = () => { init(); };
 
         ws.onmessage = async (event) => {
             const data = JSON.parse(event.data);
             console.log("!! BROWSER RECEIVED WEBRTC PACKET: ", data);
             
+            const senderId = data.senderId;
+
             switch (data.type) {
                 case 'registered':
                     myId = data.id;
-                    document.getElementById('callBtn').disabled = false;
+                    document.getElementById('myIdDisplay').innerText = myId;
                     console.log("Registered on server as: " + myId);
                     break;
+
+                case 'mesh-peer-list':
+                    data.peers.forEach(peer => {
+                        if (peer.id !== myId && !peerConnections.has(peer.id)) {
+                            console.log("Discovered active mesh peer node: " + peer.id + ". Initializing pipeline...");
+                            createMeshPeerConnection(peer.id, true);
+                        }
+                    });
+                    break;
         
-                case 'answer':
-                    // If we already completed the handshake state path, ignore duplicate packet traffic
-                    if (peerConnection.signalingState === "stable") {
-                        console.log("Skipped duplicate answer envelope.");
-                        break;
+                case 'offer':
+                    console.log("Processing inbound configuration offer from: " + senderId);
+                    let pcOffer = peerConnections.get(senderId);
+                    if (!pcOffer) {
+                        pcOffer = createMeshPeerConnection(senderId, false);
                     }
+                    
                     try {
-                        const sessionDescriptionInit = {
+                        const rtcOffer = new RTCSessionDescription({ type: 'offer', sdp: data.sdp });
+                        await pcOffer.setRemoteDescription(rtcOffer);
+                        
+                        const answer = await pcOffer.createAnswer();
+                        await pcOffer.setLocalDescription(answer);
+                        
+                        ws.send(JSON.stringify({
                             type: 'answer',
-                            sdp: (typeof data.sdp === 'object' && data.sdp.sdp) ? data.sdp.sdp : data.sdp
-                        };
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(sessionDescriptionInit));
-                        console.log("✅ Remote SDP Description applied to PeerConnection instance successfully!");
+                            targetId: senderId,
+                            sdp: answer.sdp
+                        }));
                     } catch (err) {
-                        console.error("❌ Handshake failure during remote description construction:", err);
+                        console.error("Failed handling inbound setup offer pipeline:", err);
                     }
                     break;
 
+                case 'answer':
+                    const pcAnswer = peerConnections.get(senderId);
+                    if (pcAnswer) {
+                        if (pcAnswer.signalingState === "stable") break;
+                        try {
+                            const rtcAnswer = new RTCSessionDescription({ type: 'answer', sdp: data.sdp });
+                            await pcAnswer.setRemoteDescription(rtcAnswer);
+                            console.log("Handshake connection established directly with target node: " + senderId);
+                        } catch (err) {
+                            console.error("Error applying remote response matrix layout:", err);
+                        }
+                    }
+                    break;
         
                 case 'ice-candidate':
-                    // Prevent candidate ingestion crashes by ensuring the handshake has settled first
-                    if (peerConnection && peerConnection.remoteDescription && data.candidate) {
+                    const pcCandidate = peerConnections.get(senderId);
+                    if (pcCandidate && pcCandidate.remoteDescription && data.candidate) {
                         try {
-                            let incomingCandidate = null;
-                            
-                            // Fallback unpacking checks to handle nested dictionary formatting gracefully
-                            if (data.candidate.candidate) {
-                                incomingCandidate = new RTCIceCandidate(data.candidate);
-                            } else {
-                                incomingCandidate = new RTCIceCandidate({
-                                    candidate: data.candidate,
-                                    sdpMid: data.sdpMid || "",
-                                    sdpMLineIndex: data.sdpMLineIndex || 0
-                                });
-                            }
-                            
-                            await peerConnection.addIceCandidate(incomingCandidate);
+                            const rawCand = data.candidate.candidate ? data.candidate : {
+                                candidate: data.candidate,
+                                sdpMid: data.sdpMid || "",
+                                sdpMLineIndex: data.sdpMLineIndex || 0
+                            };
+                            await pcCandidate.addIceCandidate(new RTCIceCandidate(rawCand));
                         } catch (candidateErr) {
-                            console.warn("Skipped dynamic track candidate adjustment layout:", candidateErr);
+                            console.warn("Dropped redundant transient network path option:", candidateErr);
                         }
                     }
                     break;
         
                 case 'hangup':
-                    handleRemoteHangup();
+                    teardownMeshPeer(senderId);
                     break;
             }
         };
 
+        function createMeshPeerConnection(peerId, isInitiator) {
+            const pc = new RTCPeerConnection(rtcConfig);
+            peerConnections.set(peerId, pc);
 
-        // Update the 'Call Tablet' button click logic in your browser
-        document.getElementById('callBtn').onclick = async () => {
-            peerConnection = new RTCPeerConnection(rtcConfig);
-        
-            // 1. ADD TRACKS FIRST: Loop through and attach camera/mic data to the connection object
             if (localStream) {
                 localStream.getTracks().forEach(track => {
-                    peerConnection.addTrack(track, localStream);
-                    console.log("Attached local browser track to PeerConnection: " + track.kind);
+                    pc.addTrack(track, localStream);
                 });
             }
-        
-            // 2. Bind the remote stream track listener
-            peerConnection.ontrack = (event) => {
-                console.log("📺 Browser intercepted remote stream track matrix!", event.streams);
-                const remoteVideo = document.getElementById('remoteVideo');
-                
-                // Ensure we explicitly assign the first available stream array block to the video DOM element
-                if (event.streams && event.streams[0]) {
-                    remoteVideo.srcObject = event.streams[0];
-                }
-            };
 
-        
-            peerConnection.onicecandidate = (event) => {
+            pc.onicecandidate = (event) => {
                 if (event.candidate) {
                     ws.send(JSON.stringify({
                         type: 'ice-candidate',
-                        targetId: targetId,
+                        targetId: peerId,
                         candidate: event.candidate
                     }));
                 }
             };
-        
-            // 3. CREATE OFFER LAST: Now the offer will accurately describe the video streams
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-        
-            ws.send(JSON.stringify({
-                type: 'offer',
-                targetId: targetId,
-                sdp: offer.sdp
-            }));
-        };
 
+            pc.ontrack = (event) => {
+                console.log("Target stream payload arrived from node: " + peerId);
+                let videoElement = document.getElementById("video_" + peerId);
+                
+                if (!videoElement) {
+                    const grid = document.getElementById('videoGrid');
+                    
+                    const box = document.createElement('div');
+                    box.className = 'video-box';
+                    box.id = "box_" + peerId;
+                    
+                    videoElement = document.createElement('video');
+                    videoElement.id = "video_" + peerId;
+                    videoElement.autoplay = true;
+                    videoElement.playsInline = true;
+                    
+                    const label = document.createElement('div');
+                    label.className = 'peer-label';
+                    label.innerText = "Peer: " + peerId;
+                    
+                    box.appendChild(videoElement);
+                    box.appendChild(label);
+                    grid.appendChild(box);
+                }
 
-        function handleRemoteHangup() {
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
+                // FIXED: Explicitly indexing the stream array to unblock rendering engine decoding
+                if (event.streams && event.streams[0]) {
+                    videoElement.srcObject = event.streams[0];
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                console.log("[ICE State Change] Peer " + peerId + ": " + pc.iceConnectionState);
+            };
+
+            if (isInitiator) {
+                pc.onnegotiationneeded = async () => {
+                    try {
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+                        ws.send(JSON.stringify({
+                            type: 'offer',
+                            targetId: peerId,
+                            sdp: offer.sdp
+                        }));
+                    } catch (err) {
+                        console.error("Negotiation setup offer crash layout loop:", err);
+                    }
+                };
             }
-            document.getElementById('remoteVideo').srcObject = null;
+
+            return pc;
         }
 
-        ws.onopen = () => { init(); };
+        function teardownMeshPeer(peerId) {
+            const pc = peerConnections.get(peerId);
+            if (pc) {
+                pc.close();
+                peerConnections.delete(peerId);
+            }
+            
+            const box = document.getElementById("box_" + peerId);
+            if (box) {
+                box.remove();
+            }
+            console.log("Cleaned up node reference from active mesh layout: " + peerId);
+        }
     </script>
 </body>
 </html>
