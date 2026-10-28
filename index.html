@@ -28,26 +28,27 @@
             ws.send(JSON.stringify({ type: 'register-browser' }));
         }
 
-        ws.onmessage = async (message) => {
-            const data = JSON.parse(message);
-
+        ws.onmessage = async (event) => {
+            // Extract the raw string payload from the event container first
+            const data = JSON.parse(event.data); //  Fixed
+            
             switch (data.type) {
                 case 'registered':
                     myId = data.id;
                     document.getElementById('callBtn').disabled = false;
                     console.log("Registered on server as: " + myId);
                     break;
-
+        
                 case 'answer':
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
                     break;
-
+        
                 case 'ice-candidate':
                     if (peerConnection && data.candidate) {
                         await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
                     }
                     break;
-
+        
                 case 'hangup':
                     handleRemoteHangup();
                     break;
