@@ -19,8 +19,8 @@
         let peerConnection;
         let myId = null;
         const targetId = 'tablet'; // Flutter app identifier
-
-        const rtcConfig = { iceServers: [{ urls: 'stun:://google.com' }] };
+        
+        const rtcConfig = { iceServers: [{ urls: 'stun:google.com' }] };
 
         async function init() {
             localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
