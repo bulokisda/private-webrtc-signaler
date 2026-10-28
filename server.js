@@ -1,58 +1,85 @@
 const WebSocket = require('ws');
 const wss = new WebSocket.Server({ port: 8080 });
 
-// Track active connections
-const clients = new Map(); // Store as id -> socket
+// Track active connections map (Store as id -> socket instance)
+const clients = new Map();
+
+console.log("Mesh Signaling Server active on port 8080...");
 
 wss.on('connection', (ws) => {
     let clientId = null;
 
-    ws.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
-        
-        switch (data.type) {
-            case 'registered':
-                myId = data.id;
-                document.getElementById('callBtn').disabled = false;
-                console.log("Registered on server as: " + myId);
-                break;
-    
-            case 'answer':
-                // FIXED: Explicitly map the incoming object keys rather than passing the container object!
-                await peerConnection.setRemoteDescription(new RTCSessionDescription({
-                    type: 'answer',
-                    sdp: data.sdp
-                }));
-                console.log("Remote SDP answer applied successfully.");
-                break;
-    
-            case 'ice-candidate':
-                // FIXED: Safeguard candidate ingestion by ensuring our remote description has landed first
-                if (peerConnection && peerConnection.remoteDescription && data.candidate) {
-                    // If your signaling data object contains a sub-candidate dictionary layer:
-                    const candidateData = data.candidate.candidate ? data.candidate : {
-                        candidate: data.candidate.candidate || data.candidate,
-                        sdpMid: data.candidate.sdpMid,
-                        sdpMLineIndex: data.candidate.sdpMLineIndex
-                    };
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidateData));
-                }
-                break;
-    
-            case 'hangup':
-                handleRemoteHangup();
-                break;
-        }
-    };
+    // Node.js 'ws' package uses 'message' event with raw data parameters, NOT browser 'onmessage'
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
 
+            switch (data.type) {
+                case 'register-tablet':
+                    // Map unique key matching the registration payload
+                    clientId = data.id || 'tablet';
+                    clients.set(clientId, ws);
+                    console.log(`Tablet registered successfully as node: ${clientId}`);
+                    break;
+
+                case 'register-browser':
+                    // Generate a distinct hash string matching multiple incoming participants
+                    clientId = 'browser_user_' + Math.random().toString(36).substr(2, 5);
+                    clients.set(clientId, ws);
+                    console.log(`Browser registered successfully as node: ${clientId}`);
+                    
+                    // Reply to the browser and inform it of its assigned unique string hash
+                    ws.send(JSON.stringify({ type: 'registered', id: clientId }));
+                    break;
+
+                case 'offer':
+                case 'answer':
+                case 'ice-candidate':
+                    // Attach who sent it to the envelope payload automatically
+                    data.senderId = clientId;
+                    
+                    // TARGETED ROUTING SYSTEM: Route directly to the intended destination node map
+                    const targetId = data.targetId || 'tablet';
+                    const targetSocket = clients.get(targetId);
+                    
+                    if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+                        targetSocket.send(JSON.stringify(data));
+                    } else {
+                        console.log(`Warning: Target node (${targetId}) not found or offline.`);
+                    }
+                    break;
+
+                case 'ping':
+                    ws.send(JSON.stringify({ type: 'pong' }));
+                    break;
+
+                case 'hangup':
+                    if (data.targetId) {
+                        const tSocket = clients.get(data.targetId);
+                        if (tSocket) tSocket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
+                    } else {
+                        // Broadcast hangup to all sibling targets if no explicit ID parameter is declared
+                        clients.forEach((socket, id) => {
+                            if (id !== clientId) socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
+                        });
+                    }
+                    break;
+            }
+        } catch (e) {
+            console.error("Error decoding signaling frame:", e);
+        }
+    });
 
     ws.on('close', () => {
         if (clientId) {
             clients.delete(clientId);
-            console.log(`${clientId} disconnected`);
-            // Notify other peers
+            console.log(`Node disconnected: ${clientId}`);
+            
+            // Broadcast connection dropout alert down to all surviving mesh elements
             clients.forEach((socket) => {
-                socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
+                }
             });
         }
     });
