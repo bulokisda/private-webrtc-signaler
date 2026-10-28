@@ -7,54 +7,44 @@ const clients = new Map(); // Store as id -> socket
 wss.on('connection', (ws) => {
     let clientId = null;
 
-    ws.on('message', (message) => {
-        const data = JSON.parse(message);
-
+    ws.onmessage = async (event) => {
+        const data = JSON.parse(event.data);
+        
         switch (data.type) {
-            case 'register-tablet':
-                clientId = data.id || 'tablet'; // Read the explicit target ID parameter safely
-                clients.set(clientId, ws);
-                console.log(`Tablet registered securely as node: ${clientId}`);
+            case 'registered':
+                myId = data.id;
+                document.getElementById('callBtn').disabled = false;
+                console.log("Registered on server as: " + myId);
                 break;
-
-            case 'register-browser':
-                clientId = 'browser_user_' + Math.random().toString(36).substr(2, 5);
-                clients.set(clientId, ws);
-                console.log(`Browser registered: ${clientId}`);
-                // Tell the browser its own ID
-                ws.send(JSON.stringify({ type: 'registered', id: clientId }));
-                break;
-
-            case 'offer':
+    
             case 'answer':
+                // FIXED: Explicitly map the incoming object keys rather than passing the container object!
+                await peerConnection.setRemoteDescription(new RTCSessionDescription({
+                    type: 'answer',
+                    sdp: data.sdp
+                }));
+                console.log("Remote SDP answer applied successfully.");
+                break;
+    
             case 'ice-candidate':
-                // Attach who sent it
-                data.senderId = clientId;
-                
-                // Route directly to the intended recipient
-                const targetSocket = clients.get(data.targetId || 'tablet');
-                if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
-                    targetSocket.send(JSON.stringify(data));
+                // FIXED: Safeguard candidate ingestion by ensuring our remote description has landed first
+                if (peerConnection && peerConnection.remoteDescription && data.candidate) {
+                    // If your signaling data object contains a sub-candidate dictionary layer:
+                    const candidateData = data.candidate.candidate ? data.candidate : {
+                        candidate: data.candidate.candidate || data.candidate,
+                        sdpMid: data.candidate.sdpMid,
+                        sdpMLineIndex: data.candidate.sdpMLineIndex
+                    };
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidateData));
                 }
                 break;
-
-            case 'ping':
-                ws.send(JSON.stringify({ type: 'pong' }));
-                break;
-
+    
             case 'hangup':
-                if (data.targetId) {
-                    const tSocket = clients.get(data.targetId);
-                    if (tSocket) tSocket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
-                } else {
-                    // Broadcast hangup if no specific target
-                    clients.forEach((socket, id) => {
-                        if (id !== clientId) socket.send(JSON.stringify({ type: 'hangup', senderId: clientId }));
-                    });
-                }
+                handleRemoteHangup();
                 break;
         }
-    });
+    };
+
 
     ws.on('close', () => {
         if (clientId) {
