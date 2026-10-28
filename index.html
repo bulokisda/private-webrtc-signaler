@@ -12,7 +12,7 @@
     </style>
 </head>
 <body>
-    <h2>Mesh 4</h2>
+    <h2>Mesh 5</h2>
     <div>My Connection Identity: <strong id="myIdDisplay" style="color: #4CAF50;">Connecting...</strong></div>
     
     <div class="grid-container" id="videoGrid">
@@ -44,13 +44,19 @@
 
         async function init() {
             try {
+                // 1. Force the engine to block until the hardware cameras are fully online
                 localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
                 document.getElementById('localVideo').srcObject = localStream;
+                
+                // 2. ONLY register to the signaling engine AFTER our local tracks are ready to be attached
+                ws.send(JSON.stringify({ type: 'register-browser' }));
             } catch (err) {
                 console.error("Camera access blocked:", err);
+                // Fallback: register anyway if hardware fails so the room doesn't lock up
+                ws.send(JSON.stringify({ type: 'register-browser' }));
             }
-            ws.send(JSON.stringify({ type: 'register-browser' }));
         }
+
 
         ws.onopen = () => { init(); };
 
