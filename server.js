@@ -40,14 +40,24 @@ wss.on('connection', (ws) => {
 
             switch (data.type) {
                 case 'register-tablet':
+                    // Clean out any old registrations using this exact socket first
+                    clients.forEach((info, id) => {
+                        if (info.socket === ws) clients.delete(id);
+                    });
+            
                     clientId = data.id || 'tablet_' + Math.random().toString(36).substr(2, 5);
                     clients.set(clientId, { socket: ws, type: 'tablet' });
                     console.log(`Android 10 Node Registered: ${clientId}`);
                     ws.send(JSON.stringify({ type: 'registered', id: clientId }));
                     broadcastPeerList();
                     break;
-
+            
                 case 'register-browser':
+                    // Clean out any old registrations using this exact socket first
+                    clients.forEach((info, id) => {
+                        if (info.socket === ws) clients.delete(id);
+                    });
+            
                     clientId = 'browser_' + Math.random().toString(36).substr(2, 5);
                     clients.set(clientId, { socket: ws, type: 'browser' });
                     console.log(`Web Browser Node Registered: ${clientId}`);
