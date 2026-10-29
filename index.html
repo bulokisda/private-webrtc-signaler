@@ -2,43 +2,36 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>WebRTC Manual Mesh Node</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Private WebRTC Video Call</title>
     <style>
-        body { font-family: sans-serif; background: #121212; color: #fff; margin: 20px; }
-        .grid-container { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; }
-        .video-box { position: relative; width: 320px; height: 240px; background: #222; border-radius: 8px; overflow: hidden; }
-        video { width: 100%; height: 100%; object-fit: cover; }
-        .peer-label { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-        .peer-list-panel { background: #1e1e1e; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
-        .peer-row { display: flex; align-items: center; justify-content: space-between; max-width: 400px; margin-bottom: 8px; background: #2a2a2a; padding: 8px; border-radius: 4px; }
-        .privacy-panel { background: #222; border: 1px solid #333; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 15px; }
-        button { background: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
-        button:disabled { background: #444; color: #888; cursor: not-allowed; }
+        body { font-family: sans-serif; background: #222; color: #fff; padding: 20px; }
+        .peer-row { margin: 10px 0; padding: 10px; background: #333; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+        button { padding: 6px 12px; background: #4CAF50; border: none; color: white; border-radius: 4px; cursor: pointer; }
         button.hangup-btn { background: #f44336; }
-        button.privacy-btn { background: #2196F3; }
-        button.privacy-btn.active { background: #f44336; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        #videoGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; margin-top: 20px; }
+        .video-box { position: relative; background: #000; border-radius: 8px; overflow: hidden; height: 180px; }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        .peer-label { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.6); padding: 2px 6px; font-size: 12px; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <h2>Calling 8</h2>
+    <h1>Private WebRTC Workspace</h1>
+    <div>Status: <span id="myIdDisplay" style="color: #ff9800; font-weight: bold;">Establishing connection to signaling engine...</span></div>
+    <br>
+    <button id="mediaToggleBtn" onclick="toggleLocalMedia()">Start Camera & Join Room</button>
     
-    <!-- Privacy Control Panel Layer -->
-    <div class="privacy-panel">
-        <button id="mediaToggleBtn" class="privacy-btn" onclick="toggleLocalMedia()">Start Camera & Join Room</button>
-        <div>Status: <strong id="myIdDisplay" style="color: #ff9800;">Offline (Privacy Mode)</strong></div>
+    <h3>Local Video</h3>
+    <div style="width: 240px; height: 180px; background: #000; border-radius: 8px; overflow: hidden;">
+        <video id="localVideo" autoplay playsinline muted style="width: 100%; height: 100%; object-fit: cover;"></video>
     </div>
-    
-    <div class="peer-list-panel">
-        <h3>Available Mesh Peers</h3>
-        <div id="peerListContainer">Join the room to view active peers.</div>
-    </div>
-    
-    <div class="grid-container" id="videoGrid">
-        <div class="video-box">
-            <video id="localVideo" autoplay playsinline muted></video>
-            <div class="peer-label">Local Camera (Me)</div>
-        </div>
-    </div>
+
+    <h3>Available Mesh Peers</h3>
+    <div id="peerListContainer">Join the room to view active peers.</div>
+
+    <h3>Remote Video Grid</h3>
+    <div id="videoGrid"></div>
 
     <script>
         const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
@@ -48,6 +41,7 @@
         let myId = null;
         let isMediaActive = false;
         const peerConnections = new Map();
+        const iceQueues = new Map(); // Global holding queue for early ICE candidates
 
         // 1. ROBUST RECONNECTING WEBSOCKET WRAPPER
         function connectSignalingServer() {
@@ -86,6 +80,10 @@
                         let pcOffer = createMeshPeerConnection(senderId);
                         try {
                             await pcOffer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
+                            
+                            // Remote description is now set! Safely process any early queued candidates
+                            await processIceQueue(senderId); 
+                            
                             const answer = await pcOffer.createAnswer();
                             await pcOffer.setLocalDescription(answer);
                             ws.send(JSON.stringify({ type: 'answer', targetId: senderId, sdp: answer.sdp }));
@@ -101,6 +99,10 @@
                         if (pcAnswer) {
                             await pcAnswer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
                             console.log("Call handshaking completed with: " + senderId);
+                            
+                            // Remote description is now set! Safely process any early queued candidates
+                            await processIceQueue(senderId);
+                            
                             togglePeerButton(senderId, true);
                         }
                         break;
@@ -108,8 +110,16 @@
                     case 'ice-candidate':
                         if (!isMediaActive) break;
                         const pcCandidate = peerConnections.get(senderId);
+                        
                         if (pcCandidate && pcCandidate.remoteDescription && data.candidate) {
+                            // PeerConnection exists and remote description is set. Apply immediately.
                             await pcCandidate.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        } else if (data.candidate) {
+                            // Race case: The candidate arrived too early (either RTCPeerConnection doesn't 
+                            // exist yet, or it does but setRemoteDescription hasn't finished). Queue it up!
+                            console.log(`Queueing early candidate from ${senderId} (PC exists: ${!!pcCandidate})`);
+                            if (!iceQueues.has(senderId)) iceQueues.set(senderId, []);
+                            iceQueues.get(senderId).push(data.candidate);
                         }
                         break;
             
@@ -125,7 +135,7 @@
 
             ws.onclose = () => {
                 console.warn("Signaling socket severed. Triggering scheduled revival...");
-                myId = null;
+                myId = null; 
                 
                 if (isMediaActive) {
                     document.getElementById('myIdDisplay').innerText = "Reconnecting Signal Server...";
@@ -207,6 +217,7 @@
                 if (box) box.remove();
             });
             peerConnections.clear();
+            iceQueues.clear();
 
             if (localStream) {
                 localStream.getTracks().forEach(track => {
@@ -220,7 +231,23 @@
             if (localVid) {
                 localVid.srcObject = null;
                 localVid.removeAttribute('src');
-                localVid.load();
+                localVid.load(); 
+            }
+        }
+
+        async function processIceQueue(peerId) {
+            const pc = peerConnections.get(peerId);
+            const queue = iceQueues.get(peerId);
+            if (pc && pc.remoteDescription && queue) {
+                console.log(`Draining ${queue.length} early queued candidates for ${peerId}`);
+                while (queue.length > 0) {
+                    const cand = queue.shift();
+                    try {
+                        await pc.addIceCandidate(new RTCIceCandidate(cand));
+                    } catch (e) {
+                        console.error("Error processing queued ICE candidate:", e);
+                    }
+                }
             }
         }
 
@@ -261,10 +288,9 @@
         function togglePeerButton(peerId, isConnected) {
             const btn = document.getElementById(`btn_${peerId}`);
             if (!btn) return;
-        
-            // Reset the disabled property so the button becomes clickable again
-            btn.disabled = false; 
-        
+
+            btn.disabled = false; // Ensure button becomes clickable again
+
             if (isConnected) {
                 btn.innerText = "Hangup";
                 btn.className = "hangup-btn";
@@ -275,7 +301,6 @@
                 btn.onclick = () => initiateOutboundCall(peerId);
             }
         }
-
 
         async function initiateOutboundCall(targetPeerId) {
             if(!isMediaActive) return;
@@ -306,6 +331,7 @@
 
             const pc = new RTCPeerConnection(rtcConfig);
             peerConnections.set(peerId, pc);
+            if (!iceQueues.has(peerId)) iceQueues.set(peerId, []);
 
             if (localStream) {
                 localStream.getTracks().forEach(track => {
@@ -313,7 +339,6 @@
                 });
             }
 
-            // 4. RATE THROTTLING ICE CANDIDATES FOR RENDER PROXY STABILITY
             pc.onicecandidate = (event) => {
                 if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
                     setTimeout(() => {
@@ -369,6 +394,8 @@
                 peerConnections.delete(peerId); 
             }
             
+            iceQueues.delete(peerId);
+
             const box = document.getElementById("box_" + peerId);
             if (box) {
                 box.remove();
