@@ -50,11 +50,19 @@
 
             ws.onopen = () => {
                 console.log("WebSocket wire connected successfully.");
+                
+                const idDisplay = document.getElementById('myIdDisplay');
+                
                 if (isMediaActive && !myId) {
-                    document.getElementById('myIdDisplay').innerText = "Re-registering...";
+                    idDisplay.innerText = "Re-registering...";
                     ws.send(JSON.stringify({ type: 'register-browser' }));
+                } else if (!isMediaActive) {
+                    // Fix: Update the text when loading the page for the first time
+                    idDisplay.innerText = "Start Camera to Join Room";
+                    idDisplay.style.color = "#ff9800"; // Orange text showing it is ready but waiting for media
                 }
             };
+
 
             ws.onmessage = async (event) => {
                 const data = JSON.parse(event.data);
