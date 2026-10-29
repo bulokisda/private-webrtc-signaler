@@ -20,7 +20,7 @@
     </style>
 </head>
 <body>
-    <h2>Calling 6</h2>
+    <h2>Calling 7</h2>
     
     <!-- Privacy Control Panel Layer -->
     <div class="privacy-panel">
@@ -40,17 +40,116 @@
         </div>
     </div>
 
-
     <script>
-        const ws = new WebSocket('wss://family-video-signaler.onrender.com');
         const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] };
 
+        let ws = null;
         let localStream = null;
         let myId = null;
         let isMediaActive = false;
         const peerConnections = new Map();
 
-        // MANAGE PRIVACY & HARDWARE TOGGLE
+        // 1. ROBUST RECONNECTING WEBSOCKET WRAPPER
+        function connectSignalingServer() {
+            console.log("Establishing connection to signaling engine...");
+            ws = new WebSocket('wss://family-video-signaler.onrender.com');
+
+            ws.onopen = () => {
+                console.log("WebSocket wire connected successfully.");
+                if (isMediaActive && !myId) {
+                    document.getElementById('myIdDisplay').innerText = "Re-registering...";
+                    ws.send(JSON.stringify({ type: 'register-browser' }));
+                }
+            };
+
+            ws.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+                const senderId = data.senderId;
+
+                switch (data.type) {
+                    case 'registered':
+                        myId = data.id;
+                        const idDisplay = document.getElementById('myIdDisplay');
+                        idDisplay.innerText = "Connected as: " + myId;
+                        idDisplay.style.color = "#4CAF50";
+                        break;
+
+                    case 'mesh-peer-list':
+                        if (isMediaActive) {
+                            renderPeerDirectory(data.peers);
+                        }
+                        break;
+            
+                    case 'offer':
+                        if (!isMediaActive) break; 
+                        console.log("Receiving call request from: " + senderId);
+                        let pcOffer = createMeshPeerConnection(senderId);
+                        try {
+                            await pcOffer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
+                            const answer = await pcOffer.createAnswer();
+                            await pcOffer.setLocalDescription(answer);
+                            ws.send(JSON.stringify({ type: 'answer', targetId: senderId, sdp: answer.sdp }));
+                            togglePeerButton(senderId, true);
+                        } catch (err) {
+                            console.error("Error answering call:", err);
+                        }
+                        break;
+
+                    case 'answer':
+                        if (!isMediaActive) break;
+                        const pcAnswer = peerConnections.get(senderId);
+                        if (pcAnswer) {
+                            await pcAnswer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
+                            console.log("Call handshaking completed with: " + senderId);
+                            togglePeerButton(senderId, true);
+                        }
+                        break;
+
+                    case 'ice-candidate':
+                        if (!isMediaActive) break;
+                        const pcCandidate = peerConnections.get(senderId);
+                        if (pcCandidate && pcCandidate.remoteDescription && data.candidate) {
+                            await pcCandidate.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        }
+                        break;
+            
+                    case 'hangup':
+                        const peerToDisconnect = data.senderId || data.targetId;
+                        console.log("Remote peer requested hangup teardown: " + peerToDisconnect);
+                        if (peerToDisconnect) {
+                            teardownMeshPeer(peerToDisconnect);
+                        }
+                        break;
+                }
+            };
+
+            ws.onclose = () => {
+                console.warn("Signaling socket severed. Triggering scheduled revival...");
+                myId = null;
+                
+                if (isMediaActive) {
+                    document.getElementById('myIdDisplay').innerText = "Reconnecting Signal Server...";
+                    document.getElementById('myIdDisplay').style.color = "#ff9800";
+                } else {
+                    document.getElementById('myIdDisplay').innerText = "Disconnected from Signal Server";
+                    document.getElementById('myIdDisplay').style.color = "#f44336";
+                }
+
+                setTimeout(() => {
+                    connectSignalingServer();
+                }, 2000);
+            };
+
+            ws.onerror = (err) => {
+                console.error("Socket error encountered:", err);
+                ws.close();
+            };
+        }
+
+        // Initialize socket loop immediately on page boot
+        connectSignalingServer();
+
+        // 2. MANAGE PRIVACY & HARDWARE TOGGLE
         async function toggleLocalMedia() {
             const btn = document.getElementById('mediaToggleBtn');
             
@@ -65,8 +164,7 @@
                     btn.className = "privacy-btn active";
                     document.getElementById('myIdDisplay').innerText = "Registering...";
                     
-                    // Explicitly register now that tracks are safe and present
-                    if (ws.readyState === WebSocket.OPEN) {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({ type: 'register-browser' }));
                     }
                 } catch (err) {
@@ -82,7 +180,6 @@
                 btn.innerText = "Start Camera & Join Room";
                 btn.className = "privacy-btn";
                 
-                // Clear state values completely to prevent ghost redraw updates
                 myId = null; 
                 document.getElementById('myIdDisplay').innerText = "Offline (Privacy Mode)";
                 document.getElementById('myIdDisplay').style.color = "#ff9800";
@@ -90,18 +187,11 @@
             }
         }
 
-        ws.onclose = () => {
-            isMediaActive = false;
-            document.getElementById('myIdDisplay').innerText = "Disconnected from Signal Server";
-            document.getElementById('myIdDisplay').style.color = "#f44336";
-        };
-
+        // 3. FORCE MOBILE RE-RENDER ON CLEANUP
         function cleanupAllConnections() {
             console.log("Dismantling room workspace, closing active channels...");
             
-            // Explicitly tell the server we are leaving before cutting connections
             if (ws && ws.readyState === WebSocket.OPEN && myId) {
-                // Sending an explicit teardown notify message forces the server to drop our registration instantly
                 ws.send(JSON.stringify({ type: 'hangup', targetId: null }));
             }
 
@@ -119,81 +209,26 @@
             peerConnections.clear();
 
             if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
+                localStream.getTracks().forEach(track => {
+                    track.stop();
+                    console.log(`Track successfully halted: ${track.kind}`);
+                });
                 localStream = null;
             }
-            document.getElementById('localVideo').srcObject = null;
-        }
-     
-        ws.onmessage = async (event) => {
-            const data = JSON.parse(event.data);
-            const senderId = data.senderId;
 
-            switch (data.type) {
-                case 'registered':
-                    myId = data.id;
-                    const idDisplay = document.getElementById('myIdDisplay');
-                    idDisplay.innerText = "Connected as: " + myId;
-                    idDisplay.style.color = "#4CAF50";
-                    break;
-
-                case 'mesh-peer-list':
-                    if (isMediaActive) {
-                        renderPeerDirectory(data.peers);
-                    }
-                    break;
-        
-                case 'offer':
-                    if (!isMediaActive) break; 
-                    console.log("Receiving call request from: " + senderId);
-                    let pcOffer = createMeshPeerConnection(senderId);
-                    try {
-                        await pcOffer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
-                        const answer = await pcOffer.createAnswer();
-                        await pcOffer.setLocalDescription(answer);
-                        ws.send(JSON.stringify({ type: 'answer', targetId: senderId, sdp: answer.sdp }));
-                        togglePeerButton(senderId, true);
-                    } catch (err) {
-                        console.error("Error answering call:", err);
-                    }
-                    break;
-
-                case 'answer':
-                    if (!isMediaActive) break;
-                    const pcAnswer = peerConnections.get(senderId);
-                    if (pcAnswer) {
-                        await pcAnswer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-                        console.log("Call handshaking completed with: " + senderId);
-                        togglePeerButton(senderId, true);
-                    }
-                    break;
-
-                case 'ice-candidate':
-                    if (!isMediaActive) break;
-                    const pcCandidate = peerConnections.get(senderId);
-                    if (pcCandidate && pcCandidate.remoteDescription && data.candidate) {
-                        await pcCandidate.addIceCandidate(new RTCIceCandidate(data.candidate));
-                    }
-                    break;
-        
-                case 'hangup':
-                    // Ensure we capture either key mapping variation cleanly
-                    const peerToDisconnect = data.senderId || data.targetId;
-                    console.log("Remote peer requested hangup teardown: " + peerToDisconnect);
-                    if (peerToDisconnect) {
-                        teardownMeshPeer(peerToDisconnect);
-                    }
-                    break;
+            const localVid = document.getElementById('localVideo');
+            if (localVid) {
+                localVid.srcObject = null;
+                localVid.removeAttribute('src');
+                localVid.load();
             }
-        };
+        }
 
         function renderPeerDirectory(peers) {
             const container = document.getElementById('peerListContainer');
-            container.innerHTML = ''; // Clears the list layout container completely
+            container.innerHTML = ''; 
             let count = 0;
 
-            // TRACK AND PURGE STALE DOM VIDEO BOXES
-            // If a peer is no longer present in the official server list, drop their video panel instantly
             const activePeerIds = peers.map(p => p.id);
             peerConnections.forEach((pc, peerId) => {
                 if (!activePeerIds.includes(peerId)) {
@@ -222,7 +257,6 @@
             });
             if(count === 0) container.innerText = "No other peers online.";
         }
-
 
         function togglePeerButton(peerId, isConnected) {
             const btn = document.getElementById(`btn_${peerId}`);
@@ -257,7 +291,9 @@
         }
 
         function handleManualHangup(targetPeerId) {
-            ws.send(JSON.stringify({ type: 'hangup', targetId: targetPeerId }));
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'hangup', targetId: targetPeerId }));
+            }
             teardownMeshPeer(targetPeerId);
         }
 
@@ -273,9 +309,14 @@
                 });
             }
 
+            // 4. RATE THROTTLING ICE CANDIDATES FOR RENDER PROXY STABILITY
             pc.onicecandidate = (event) => {
-                if (event.candidate) {
-                    ws.send(JSON.stringify({ type: 'ice-candidate', targetId: peerId, candidate: event.candidate }));
+                if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+                    setTimeout(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'ice-candidate', targetId: peerId, candidate: event.candidate }));
+                        }
+                    }, 40); 
                 }
             };
 
@@ -324,27 +365,13 @@
                 peerConnections.delete(peerId); 
             }
             
-            // Completely strip the video element box container from the DOM grid layout
             const box = document.getElementById("box_" + peerId);
             if (box) {
                 box.remove();
             }
             
-            // FIX: Force the button to toggle back to a standard "Call" action state
             togglePeerButton(peerId, false);
-            
-            // FIX: Trigger a UI re-render of the list if we are using cached data
-            // This stops a terminated connection from rendering as "Hangup" or staying active
-            const btn = document.getElementById(`btn_${peerId}`);
-            if (btn) {
-                btn.innerText = "Call";
-                btn.className = "";
-                btn.onclick = () => initiateOutboundCall(peerId);
-            }
         }
     </script>
-
-
-        
 </body>
 </html>
