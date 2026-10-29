@@ -20,7 +20,7 @@
     </style>
 </head>
 <body>
-    <h2>Calling 7</h2>
+    <h2>Calling 8</h2>
     
     <!-- Privacy Control Panel Layer -->
     <div class="privacy-panel">
@@ -261,7 +261,10 @@
         function togglePeerButton(peerId, isConnected) {
             const btn = document.getElementById(`btn_${peerId}`);
             if (!btn) return;
-
+        
+            // Reset the disabled property so the button becomes clickable again
+            btn.disabled = false; 
+        
             if (isConnected) {
                 btn.innerText = "Hangup";
                 btn.className = "hangup-btn";
@@ -272,6 +275,7 @@
                 btn.onclick = () => initiateOutboundCall(peerId);
             }
         }
+
 
         async function initiateOutboundCall(targetPeerId) {
             if(!isMediaActive) return;
