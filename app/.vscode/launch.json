@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Lito Call (Debug Tablet)",
+            "request": "launch",
+            "type": "dart",
+            "toolArgs": [
+                "--android-skip-build-dependency-validation",
+                "--no-enable-impeller"
+            ]
+        }
+    ]
+}
+
